@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Deterministically cap Scope Fidelity/Specificity/Actionability when the citation/scope/quality/boilerplate checks
-say they should be, for callers with no TestPlanReview.md to persist to. test-plan-score presents
-a rubric assessment directly without writing a review file, so unlike test-plan-review it has no
-deterministic backstop against a score agent that doesn't comply with its cap instructions. Wraps
-scripts.enforce_citation_gate.apply_score_caps() — the same pure logic test-plan-review's
-enforce_citation_gate.py uses (that one also persists the result to disk).
+say they should be, for callers with no TestPlanReview.md to persist to.
+
+Valid Actionability with no blocking ``bare_tbd``/``missing_details`` evidence preserves the
+scorer's 0/1 result; only blocking evidence is capped to 1, while ``advisory_gaps`` remain
+informational. The test-plan-score skill presents a rubric assessment directly without writing a
+review file, so this script provides the deterministic backstop that test-plan-score would otherwise
+lack. Wraps scripts.enforce_citation_gate.apply_score_caps() — the same pure logic
+test-plan-review's enforce_citation_gate.py uses (that one also persists the result to disk).
 
 Usage:
     uv run python scripts/cap_scope_fidelity.py \

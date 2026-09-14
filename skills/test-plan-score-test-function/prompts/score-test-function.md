@@ -27,7 +27,7 @@ Calibration examples file: {CALIBRATION_FILE}
 
 | Score | Definition |
 |-------|------------|
-| **2** | All preconditions, test steps, and expected results implemented in code. No excessive TODOs for specified requirements. |
+| **2** | All preconditions, test steps, and expected results implemented in code. No excessive TODOs for specified requirements. Mandatory active-feature preconditions gated with `pytest.fail`, not `skip`. |
 | **1** | Missing 1-2 items from TC, OR has TODOs for things that should be implemented from TC. |
 | **0** | Missing major sections (preconditions, steps, or assertions), OR mostly TODOs instead of implementation. |
 
@@ -35,19 +35,32 @@ Calibration examples file: {CALIBRATION_FILE}
 - Each precondition from TC → implemented in setup/fixtures
 - Each test step from TC → implemented as code
 - Each expected result from TC → implemented as assertion
+- **skip vs. fail:** a precondition the active feature-under-test *must* provide (the provider
+  itself, a model the active provider should register) that is `pytest.skip`ped instead of
+  `pytest.fail`ed is a defect — it hides the exact condition the test exists to catch. (Genuinely
+  optional environment/harness prerequisites may legitimately `skip`.)
 
 ### 2. ASSERTIONS — Are assertions specific and meaningful?
 
 | Score | Definition |
 |-------|------------|
-| **2** | Concrete assertions checking exact values from TC. Assertion messages explain what's being checked. |
-| **1** | Some generic assertions (`assert result is not None`), OR missing assertion messages. |
-| **0** | Mostly generic assertions, OR expected results have TODOs instead of assertions. |
+| **2** | Concrete assertions checking a feature-specific signal and exact values from TC. Assertion messages explain what's being checked. |
+| **1** | Some generic assertions (`assert result is not None`), OR missing assertion messages, OR a loose/probabilistic assertion. |
+| **0** | Mostly generic assertions ("false green"), OR probabilistic assertions on model output, OR expected results have TODOs instead of assertions. |
 
 **Check:**
 - Assertions check specific values (not just existence)
 - Assertion messages are helpful (`"API should return 200 OK"`)
 - Uses exact values from TC Expected Response when provided
+- **No false green:** the test asserts a signal that would *differ* if the feature-under-test were
+  broken/absent (provider/model presence, provider-identity, a distinguishing field) — not just
+  generic success ("all requests returned 200"), which passes for any working backend.
+- **No probabilistic assertions:** no assertions on stochastic model output (e.g. temperature
+  variability ordering) or on behavior unverifiable with the harness (on-wire forwarding without
+  request capture).
+- **Tight, not loose:** exact type checks over broad ABCs (`float`, not `numbers.Real`, which
+  accepts `int`/`bool`); finiteness guard (`NaN`/`inf`); non-empty check before indexing
+  (`choices[0]`); iterates **all** candidates (containers/files/matches), not just the first.
 
 ### 3. CONVENTION ADHERENCE — Does code follow repository conventions?
 
@@ -58,7 +71,10 @@ Calibration examples file: {CALIBRATION_FILE}
 | **0** | Uses patterns not in conventions, OR invents markers not defined in repository. |
 
 **Check:**
-- Uses markers actually defined in repository (not invented)
+- Uses markers actually **registered** in the repository (not invented) — an unregistered marker
+  breaks collection under `--strict-markers`
+- Negative tests use the repo's negative tier (commonly `tier3`), not `tier1`
+- Tests needing live external API access carry `skip_on_disconnected` (or repo equivalent)
 - Follows file naming pattern from conventions
 - Import style matches conventions (absolute vs relative)
 - Code formatting matches conventions (indentation, quotes)
@@ -89,6 +105,13 @@ Calibration examples file: {CALIBRATION_FILE}
 - Doesn't fabricate helper functions not in repository
 - Implements error handling if TC specifies it
 - No hardcoded credentials/secrets
+- **Bounded loops:** stream-consume / poll loops have a max-iteration or deadline bound that fails
+  loudly on overrun (no iterating until an unbounded stream closes), plus a client-level read
+  timeout/cancellation so a blocking `next()`/socket read cannot hang past the deadline
+- **Helper safety:** generated helper/util code never invokes a shell on test-influenced values —
+  argv-form subprocess with `shell=False` and an allowlisted executable/arguments, never `shell=True`
+  / `os.system` / `sh -c` (CWE-78) — uses exact comparison over substring (`"SET" in output` also
+  matches `"UNSET"`), and rejects unknown enum values instead of silently falling through
 
 ---
 
@@ -130,11 +153,11 @@ Write your assessment to {OUTPUT_FILE} using the Write tool in this exact markdo
 
 | Criterion | Score | Issues |
 |-----------|-------|--------|
-| Coverage | {0-2} | {specific missing items or "None"} |
-| Assertions | {0-2} | {generic assertions or missing messages or "None"} |
-| Convention Adherence | {0-2} | {deviations from repo patterns or "None"} |
+| Coverage | {0-2} | {missing items or skip-where-fail-warranted or "None"} |
+| Assertions | {0-2} | {generic/false-green/probabilistic/loose assertions or missing messages or "None"} |
+| Convention Adherence | {0-2} | {deviations, unregistered markers, wrong tier, missing skip_on_disconnected or "None"} |
 | Test Data | {0-2} | {placeholders or incorrect values or "None"} |
-| Code Quality | {0-2} | {TODOs or fabricated code or "None"} |
+| Code Quality | {0-2} | {TODOs, fabricated code, unbounded loops, unsafe helpers or "None"} |
 
 **Total Score**: {sum}/10
 
@@ -219,3 +242,8 @@ No significant issues found.
 - ❌ Do NOT invent issues
 - ❌ Do NOT expect features not in TC
 - ❌ Do NOT score based on generic "best practices" not in repo conventions
+- ⚠️ **Exception — always in scope:** the correctness/safety defects named in the criteria above
+  (false-green / generic-success assertions, `skip` where the active feature warrants `fail`,
+  probabilistic or loose assertions, unbounded loops, shell injection / substring / unhandled-enum
+  bugs in helpers, unregistered markers, and unverified activation gates) are objective defects, not style
+  preferences — score them down even if repo conventions don't mention them.

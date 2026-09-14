@@ -12,14 +12,16 @@ Usage:
     uv run python scripts/consolidate_gaps_and_stamp.py \
         --feature-name "<name>" --source-key RHAISTRAT-400 \
         --source endpoints=<path> --source risks=<path> --source infra=<path> \
+        --actionability-result '<json from validate_quality_evidence.py>' \
         --last-updated YYYY-MM-DD \
         --out <feature_dir>/TestPlanGaps.md
 
 Exits 1 (JSON to stdout) if a source file is missing/malformed or frontmatter write
 fails. Temp source files are only deleted after TestPlanGaps.md is written successfully.
 last_updated comes from --last-updated or, if omitted, from SOURCE_DATE_EPOCH (UTC date).
-`next` is `prompt_user` only when gap_count > 0 and the session is interactive; otherwise
-`proceed` (including CI / CLAUDE_NON_INTERACTIVE).
+`next` is `prompt_user` only when analyzer gap_count > 0 and the session is interactive;
+otherwise `proceed` (including CI / CLAUDE_NON_INTERACTIVE). Actionability advisory gaps are
+written to the body but do not contribute to gap_count or trigger the menu.
 """
 
 import argparse
@@ -29,11 +31,16 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.utils.consolidate_gaps import consolidate_gaps, read_sources
+from scripts.utils.consolidate_gaps import (
+    consolidate_gaps,
+    is_actionability_advisory_concern as _is_actionability_advisory_concern,
+    read_sources,
+)
 from scripts.utils.error_utils import exit_error_with_json
 from scripts.utils.frontmatter_utils import write_frontmatter_with_body
 from scripts.utils.schemas import ValidationError
 from scripts.validate import check_interactive
+from scripts.validate_quality_evidence import validate_actionability_result
 
 
 def _verified_staging_path(name: str, path: str, out_path: str) -> Path | None:
@@ -84,6 +91,36 @@ def decide_gaps_next(gap_count: int, *, interactive: bool) -> str:
     return "proceed"
 
 
+def _append_advisory_gaps(
+    body: str, actionability_result: dict | None, analyzer_advisories: list[dict] | None = None
+) -> str:
+    """Append non-blocking actionability findings without changing analyzer gap arithmetic."""
+    if actionability_result is None and not analyzer_advisories:
+        return body
+
+    advisory_gaps = []
+    if actionability_result is not None:
+        validate_actionability_result(actionability_result)
+        advisory_gaps = list(dict.fromkeys(actionability_result["advisory_gaps"]))
+    analyzer_advisories = analyzer_advisories or []
+    if not advisory_gaps and not analyzer_advisories:
+        return body
+
+    lines = [body.rstrip(), "", "## Advisory Actionability Gaps", ""]
+    lines.extend(f"- {gap}" for gap in advisory_gaps)
+    seen_analyzer_findings = set()
+    for concern in analyzer_advisories:
+        finding = " ".join(concern["text"].split())
+        key = (concern["doc_type"], finding.casefold(), concern["source"])
+        if key in seen_analyzer_findings:
+            continue
+        seen_analyzer_findings.add(key)
+        lines.append(
+            f"- {finding} (analyzer advisory; resolved by: {concern['doc_type']}; source: {concern['source']})"
+        )
+    return "\n".join(lines)
+
+
 def consolidate_and_stamp(
     feature_name: str,
     source_key: str,
@@ -92,6 +129,7 @@ def consolidate_and_stamp(
     *,
     last_updated: str,
     cleanup: bool = True,
+    actionability_result: dict | None = None,
 ) -> dict:
     """Consolidate staged analyzer output, stamp TestPlanGaps.md, and optionally delete the staged files.
 
@@ -103,6 +141,8 @@ def consolidate_and_stamp(
         last_updated: ISO date (YYYY-MM-DD) stamped into frontmatter.
         cleanup: if True (default), delete verified staging files after successful write.
             Set to False to preserve staged files for a potential re-run (e.g. doc-resolution path).
+        actionability_result: optional structured actionability evidence. Its advisory gaps are
+            rendered for visibility, but do not affect the analyzer gap count or menu decision.
 
     Returns:
         {"gap_count": int, "status": "Open"|"Resolved"}
@@ -113,8 +153,26 @@ def consolidate_and_stamp(
         ValidationError, OSError: if writing TestPlanGaps.md fails. Staged files are left
         in place in this case so the caller can retry or debug.
     """
+    advisory_gaps = []
+    if actionability_result is not None:
+        validate_actionability_result(actionability_result)
+        advisory_gaps = list(dict.fromkeys(actionability_result["advisory_gaps"]))
+
     sources = read_sources(source_args)
-    result = consolidate_gaps(sources, feature_name=feature_name)
+    analyzer_advisories = []
+
+    def filter_concern(concern: dict) -> bool:
+        if not _is_actionability_advisory_concern(concern, advisory_gaps):
+            return False
+        analyzer_advisories.append(concern)
+        return True
+
+    result = consolidate_gaps(
+        sources,
+        feature_name=feature_name,
+        concern_filter=filter_concern if advisory_gaps else None,
+    )
+    body = _append_advisory_gaps(result["body"], actionability_result, analyzer_advisories)
 
     frontmatter = {
         "feature": feature_name,
@@ -123,7 +181,7 @@ def consolidate_and_stamp(
         "gap_count": result["gap_count"],
         "last_updated": last_updated,
     }
-    write_frontmatter_with_body(out_path, result["body"], frontmatter, "test-gaps")
+    write_frontmatter_with_body(out_path, body, frontmatter, "test-gaps")
 
     if cleanup:
         # Best-effort: TestPlanGaps.md is already correct, so a stray permission error on
@@ -169,10 +227,23 @@ def main():
         help="Do not delete the staged .analysis-*.md files after writing TestPlanGaps.md. "
         "Use for re-runs (e.g. doc-resolution path) that need the staged files to persist.",
     )
+    parser.add_argument(
+        "--actionability-result",
+        default=None,
+        help="Optional JSON from validate_quality_evidence.py; advisory gaps are recorded without affecting gap_count",
+    )
     args = parser.parse_args()
 
     try:
         last_updated = _resolve_last_updated(args.last_updated)
+        actionability_result = None
+        if args.actionability_result is not None:
+            try:
+                actionability_result = json.loads(args.actionability_result)
+            except json.JSONDecodeError as e:
+                raise ValueError("invalid_actionability_result") from e
+            if actionability_result is None:
+                raise ValueError("invalid_actionability_result")
         result = consolidate_and_stamp(
             args.feature_name,
             args.source_key,
@@ -180,6 +251,7 @@ def main():
             args.out,
             last_updated=last_updated,
             cleanup=not args.skip_cleanup,
+            actionability_result=actionability_result,
         )
         result["next"] = decide_gaps_next(
             result["gap_count"],

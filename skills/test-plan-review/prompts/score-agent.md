@@ -28,7 +28,7 @@ Calibration examples (preloaded): {CALIBRATION_TEXT}
 5. The citation validity result is provided inline above — it is the precomputed, deterministic check of each Section 1.3 objective's `(AC: #N)`/`(NFR: category)` citation against the STRAT's real AC count and NFR categories. Use its `valid`, `uncited`, and `invalid_citations` fields directly for Scope Fidelity and Consistency below. Do NOT re-derive citation validity yourself.
 6. The AC coverage result is provided inline above — it is the precomputed, deterministic check of the reverse direction: whether every AC number `1..ac_count` is cited by *some* Section 1.3 objective. Citation validity (step 5) cannot catch an AC that has no objective at all; this can. Use its `valid` and `missing` fields directly for Scope Fidelity below. Do NOT re-derive it yourself.
 7. The bidirectional scope coverage result is provided inline above — it deterministically checks that every structured AC/NFR requirement has a Section 1.3 objective, every meaningful entry in Sections 1.2, 2.3, 7.1–7.5, and 8 has an `(Objective: #N)` marker, and every objective citation resolves to a strategy requirement. Use its `valid`, `missing`, and `unmapped_objectives` fields directly for Scope Fidelity below. Do NOT try to match arbitrary STRAT prose lexically.
-8. The actionability evidence result is provided inline above — it deterministically checks Section 3 for version evidence, test-data format/examples, and concrete test-user permissions. Use its `valid`, `bare_tbd`, and `missing_details` fields directly for Actionability below. A bare TBD without an explicit resolution path cannot support Actionability 2/2. A justified TBD must use `TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}`.
+8. The actionability evidence result is provided inline above — it deterministically checks Section 3 for version evidence, test-data format/examples, and concrete test-user permissions. Use its `valid`, `bare_tbd`, `missing_details`, and `advisory_gaps` fields directly for Actionability below. `bare_tbd` and `missing_details` are blocking evidence; `advisory_gaps` records missing and vague OpenShift/RHOAI versions and incomplete test-data format/examples for visibility only. Advisory gaps alone do not lower the score or require a revision. Section 3.1 must contain substantive environment/configuration evidence, not only vague or unavailable text. The occurrence-level TBD classifier requires an explicit resolution path: a bare or unresolved TBD cannot support Actionability 2/2, while a grounded `TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}` is non-blocking; `derive` is valid when the named overlay or other source grounds the derivation. RBAC evidence must name a role, permissions, and a concrete resource; `all`/`any`/`every` collections and wildcard resources are not concrete. Test-data examples count only in explicit example labels/table columns or `e.g.,`/`for example` clauses; arbitrary inline backticks and broad words such as `token` are insufficient.
 9. The scope check result is provided inline above — it is the precomputed, deterministic check of Section 2.1 (Test Levels) against the allowed e2e/UI test levels. Use its `valid` and `violations` fields directly for Scope Fidelity below. Do NOT re-derive it yourself.
 10. The boilerplate detection result is provided inline above — it is the precomputed, deterministic scan of Sections 1.3/2.3/8 for generic phrases ("verify X works as expected," "core functionality," etc.). Use its `total_violations` and `by_section` fields directly for Specificity below. Do NOT re-derive it yourself.
 
@@ -84,13 +84,17 @@ Calibration examples (preloaded): {CALIBRATION_TEXT}
 
 | Score | Definition |
 |-------|------------|
-| **0** | Environment section is vague ("OpenShift cluster needed"), no concrete versions, test data is aspirational ("sample data"), test users are undefined. A tester would need to ask 5+ clarifying questions before starting. |
-| **1** | Some sections concrete (e.g., specific tools named, partial version info), but gaps remain — test data format unclear, RBAC roles TBD, infrastructure sizing missing. |
-| **2** | Environment versions specified or marked TBD only with an explicit resolution path. Test data requirements include format and examples. Test users have defined roles and permissions. A tester could begin environment setup immediately. |
+| **0** | Section 3.1 environment/configuration is absent or only vague/unavailable, a required value is explicitly left as a bare/unresolved TBD, or test users lack usable role, permission, and concrete-resource evidence. Broad collection or wildcard resources are unusable. A tester cannot start without resolving a blocking gap. |
+| **1** | Blocking evidence is incomplete but not severe enough for 0, or another material operational deficiency remains. Use the deterministic blocking fields as evidence; do not use an advisory gap alone as the reason for this score. |
+| **2** | Section 3.1 contains substantive environment/configuration evidence, test users have defined roles, permissions, and concrete resources, and no blocking actionability evidence remains. Missing or vague OpenShift/RHOAI versions and incomplete test-data format/examples may remain as `advisory_gaps` and do not prevent 2/2. |
 
-**Enforcement:** If `ACTIONABILITY_RESULT.valid == false`, do not claim Actionability 2/2; score it at most 1 and use the reported `bare_tbd`/`missing_details` as evidence.
+**Enforcement:** If `ACTIONABILITY_RESULT.valid == false` (that is, `bare_tbd` or `missing_details` contains blocking evidence), do not claim Actionability 2/2; score it at most 1 and use those fields as evidence. If `valid == true` and only `advisory_gaps` are present, do not cap or lower Actionability solely for those advisories.
 
-**Smell test:** Hand Section 3 to a platform engineer who knows nothing about the feature. Could they provision the environment? If they'd come back with questions, it's not actionable.
+**Smell test:** Hand Section 3 to a platform engineer who knows nothing about the feature. Could
+they begin provisioning from substantive environment/configuration details? Questions about
+missing or vague OpenShift/RHOAI versions or incomplete test-data examples are advisory;
+inability to proceed because Section 3.1 is absent/vague, a TBD is bare, or RBAC is unusable or
+collection-wide is blocking.
 
 ### 5. CONSISTENCY — Do sections agree with each other?
 
@@ -123,7 +127,7 @@ Return your assessment in this exact structure:
 | Specificity | {0-2} | {key evidence from the test plan + BOILERPLATE_RESULT.total_violations} | {why this score, referencing smell test and any enforcement cap applied} |
 | Grounding | {0-2} | {source match summary} | {count of grounded vs suspected fabrications} |
 | Scope Fidelity | {0-2} | {strategy deliverable mapping + ac_citations_result.valid + ac_coverage_result.valid + SCOPE_CHECK_RESULT.valid} | {orphans, uncited/invalid citations, missing AC numbers, or scope check violations} |
-| Actionability | {0-2} | {concrete vs vague sections} | {questions a tester would still have} |
+| Actionability | {0-2} | {blocking vs advisory evidence} | {blocking questions a tester would still have; advisory follow-ups may remain} |
 | Consistency | {0-2} | {cross-check results} | {specific mismatches found} |
 
 **Total: {sum}/10**
@@ -152,6 +156,6 @@ Be rigorous. When in doubt between two scores, choose the lower one and explain 
 The calibration examples are injected above as `{CALIBRATION_TEXT}` (preloaded; do not glob or
 read a calibration directory). They show how the rubric has been applied to real test plans
 with documented rationale. Use them to calibrate scoring — particularly for borderline cases
-on Specificity (swap test) and Actionability (5-question threshold).
+on Specificity (swap test) and Actionability (blocking-evidence threshold).
 
 Do not return a summary. Your work is complete when the assessment output above is produced.

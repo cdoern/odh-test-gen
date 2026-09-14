@@ -11,11 +11,13 @@ from scripts.consolidate_gaps_and_stamp import (
     decide_gaps_next,
 )
 from tests.consts.gaps_constants import (
+    ACTIONABILITY_CONCERN_CLASSIFICATION_CASES,
     GAPS_ALL_EMPTY,
     GAPS_ENDPOINTS_DUPLICATE,
     GAPS_NEXT_PROCEED,
     GAPS_NEXT_PROMPT_USER,
 )
+from tests.consts.validation_constants import ACTIONABILITY_ADVISORY_RESULT
 
 LAST_UPDATED = "1999-12-31"
 
@@ -203,6 +205,46 @@ class TestConsolidateAndStampSourceErrors:
             )
 
         assert not out_path.exists()
+
+
+class TestActionabilityAdvisoryConcernClassification:
+    @pytest.mark.parametrize(
+        "concern, resolved_by, expected_gap_count, expected_advisory",
+        ACTIONABILITY_CONCERN_CLASSIFICATION_CASES,
+        ids=(
+            "hf-token-scope-is-material-api-spec-gap",
+            "strict-test-data-format-example-is-advisory",
+            "compound-test-data-and-hf-concern-is-material",
+            "version-and-build",
+            "data-schema-and-example",
+            "api-response-schema",
+            "data-request-contract",
+        ),
+    )
+    def test_classifies_advisory_vocabulary_without_hiding_material_gaps(
+        self, tmp_path, concern, resolved_by, expected_gap_count, expected_advisory
+    ):
+        staging = tmp_path / ".analysis-infra.md"
+        staging.write_text(f"## Gaps\n\n- **{concern}** — would be resolved by: {resolved_by}\n")
+        out_path = tmp_path / "TestPlanGaps.md"
+
+        result = consolidate_and_stamp(
+            "Test Feature",
+            "RHAISTRAT-400",
+            [f"infra={staging}"],
+            str(out_path),
+            last_updated=LAST_UPDATED,
+            actionability_result=ACTIONABILITY_ADVISORY_RESULT,
+        )
+
+        assert result["gap_count"] == expected_gap_count
+        body = out_path.read_text()
+        if expected_advisory:
+            assert f"- {concern} (analyzer advisory;" in body
+            assert f"- **{resolved_by}** — flagged by: infra" not in body
+        else:
+            assert f"- **{resolved_by}** — flagged by: infra" in body
+            assert f"  - {concern}" in body
 
 
 class TestResolveLastUpdated:

@@ -169,5 +169,95 @@ GAPS_DOC_TYPE_ONLY_PUNCT = """## Gaps
 - **X** — would be resolved by: .
 """
 
+GAPS_INFRA_ACTIONABILITY_ADVISORY_ONLY = """## Gaps
+
+- **Specific RHOAI version requirements** — would be resolved by: ADR
+- **Test data format and example values are unspecified** — would be resolved by: ADR
+"""
+
+GAPS_INFRA_ACTIONABILITY_ADVISORY_AND_BLOCKING = (
+    GAPS_INFRA_ACTIONABILITY_ADVISORY_ONLY
+    + "- **Detailed RBAC role definitions and permission matrices** — would be resolved by: feature refinement\n"
+)
+
+ACTIONABILITY_CONCERN_CLASSIFICATION_CASES = (
+    (
+        "Specific Hugging Face API token scope requirements and validation criteria",
+        "API spec",
+        1,
+        False,
+    ),
+    (
+        "Test data format and example values are unspecified",
+        "ADR",
+        0,
+        True,
+    ),
+    (
+        "Test data format and examples plus Specific Hugging Face API token "
+        "scope requirements and validation criteria are unspecified",
+        "API spec",
+        1,
+        False,
+    ),
+    (
+        "OpenShift cluster version and RHOAI build requirements are unspecified",
+        "ADR",
+        0,
+        True,
+    ),
+    (
+        "Fixture payload schema and example values are unspecified",
+        "ADR",
+        0,
+        True,
+    ),
+    (
+        "API response schema for registration is unspecified",
+        "API spec",
+        1,
+        False,
+    ),
+    (
+        "Test data request payload format and examples are unspecified",
+        "API spec",
+        1,
+        False,
+    ),
+)
+
+ACTIONABILITY_PRODUCT_ADVISORY_CASES = (
+    (
+        "OpenShift cluster version requirements are unspecified",
+        ("OpenShift version",),
+        True,
+    ),
+    (
+        "RHOAI version requirements are unspecified",
+        ("OpenShift version",),
+        False,
+    ),
+    (
+        "RHOAI version requirements are unspecified",
+        ("RHOAI version",),
+        True,
+    ),
+    (
+        "OpenShift cluster version requirements are unspecified",
+        ("RHOAI version",),
+        False,
+    ),
+    (
+        "RHOAI version and operator compatibility requirements are unspecified",
+        ("RHOAI version",),
+        False,
+    ),
+    (
+        "Specific RHOAI version and operator version requirements are unspecified",
+        ("RHOAI version",),
+        False,
+    ),
+)
+
 GAPS_NEXT_PROCEED = "proceed"
 GAPS_NEXT_PROMPT_USER = "prompt_user"

@@ -16,12 +16,16 @@ Imported by consolidate_gaps_and_stamp.py for gap consolidation and source file 
 """
 
 import re
+from collections.abc import Callable
 
 from scripts.utils.markdown_utils import extract_section
 
 CANONICAL_DOC_TYPES = ["ADR", "API spec", "feature refinement", "design doc"]
 
 UNSPECIFIED = "(unspecified)"
+
+ACTIONABILITY_VERSION_LABELS = ("OpenShift version", "RHOAI version")
+ACTIONABILITY_TEST_DATA_GAP = "test data formats and examples"
 
 _SYNONYMS = {
     "adr": "ADR",
@@ -53,6 +57,254 @@ _PARENTHETICAL_RE = re.compile(r"\s*\([^)]*\)")
 # Separator an analyzer used to join a compound answer, e.g. "ADR / design doc" or
 # "ADR or design doc".
 _COMPOUND_SEPARATOR_RE = re.compile(r"\s*/\s*|\s+or\s+", re.IGNORECASE)
+
+_VERSION_ONLY_GAP_RE = re.compile(
+    r"^(?=.*\b(?:open\s*shift|ocp|rhoa[i]?|operator)\b)"
+    r"(?=.*\b(?:version|build|release)\b)",
+    re.IGNORECASE,
+)
+_VERSION_PRODUCT_PATTERNS = {
+    ACTIONABILITY_VERSION_LABELS[0]: re.compile(r"\b(?:open\s*shift|ocp)\b", re.IGNORECASE),
+    ACTIONABILITY_VERSION_LABELS[1]: re.compile(r"\brhoa[i]?\b", re.IGNORECASE),
+}
+_OPERATOR_VERSION_REQUIREMENT_RE = re.compile(
+    r"\boperator(?:'s)?[\s/-]+(?:versions?|builds?|releases?)\b", re.IGNORECASE
+)
+_TEST_DATA_ONLY_GAP_RE = re.compile(
+    r"^(?=.*\b(?:test[\s-]+data|fixtures?|samples?)\b)"
+    r"(?=.*\b(?:formats?|examples?|samples?|fixtures?|schema)\b)",
+    re.IGNORECASE,
+)
+_TEST_DATA_SCHEMA_CONTEXT_RE = re.compile(r"\b(?:test[\s-]+data|fixtures?|payloads?|samples?)\b", re.IGNORECASE)
+_MATERIAL_SCHEMA_CONTEXT_RE = re.compile(
+    r"\b(?:api|service|database)\b.{0,40}\bschema\b|\bschema\b.{0,40}\b(?:api|service|database)\b",
+    re.IGNORECASE,
+)
+_MATERIAL_GAP_RE = re.compile(
+    r"\b(?:api|service|endpoint|request|response|schema|contract|contracts|role|roles|permission|permissions|"
+    r"rbac|security|authentication|authorization|access|credential|credentials|token|tokens|scope|scopes|"
+    r"validation|validate|criteria|compatibility|compatible|operational|operation|webhook|network|deployment|"
+    r"migration|latency|performance|provisioning|runtime|availability|reliability|timeout|resource|resources|"
+    r"namespace|namespaces)\b",
+    re.IGNORECASE,
+)
+
+_VERSION_ONLY_TERMS = frozenset(
+    {
+        "open",
+        "shift",
+        "openshift",
+        "ai",
+        "ocp",
+        "rhoai",
+        "operator",
+        "cluster",
+        "platform",
+        "version",
+        "versions",
+        "build",
+        "builds",
+        "release",
+        "releases",
+        "number",
+        "numbers",
+        "exact",
+        "pinned",
+        "specific",
+        "required",
+        "requirement",
+        "requirements",
+        "target",
+        "desired",
+        "supported",
+        "minimum",
+        "maximum",
+        "min",
+        "max",
+        "range",
+        "ranges",
+        "the",
+        "a",
+        "an",
+        "and",
+        "or",
+        "of",
+        "for",
+        "in",
+        "on",
+        "to",
+        "be",
+        "is",
+        "are",
+        "was",
+        "were",
+        "as",
+        "at",
+        "by",
+        "before",
+        "after",
+        "during",
+        "not",
+        "no",
+        "missing",
+        "absent",
+        "unavailable",
+        "unspecified",
+        "specified",
+        "unknown",
+        "tbd",
+        "pending",
+        "latest",
+        "current",
+        "defined",
+        "provided",
+        "confirmed",
+        "determined",
+        "selected",
+        "decided",
+        "available",
+        "value",
+        "values",
+        "detail",
+        "details",
+        "environment",
+        "test",
+        "testing",
+        "setup",
+        "execution",
+        "stable",
+    }
+)
+
+_TEST_DATA_ONLY_TERMS = frozenset(
+    {
+        "test",
+        "data",
+        "format",
+        "formats",
+        "example",
+        "examples",
+        "sample",
+        "samples",
+        "fixture",
+        "fixtures",
+        "payload",
+        "payloads",
+        "schema",
+        "value",
+        "values",
+        "concrete",
+        "specific",
+        "required",
+        "requirement",
+        "requirements",
+        "missing",
+        "absent",
+        "unavailable",
+        "unspecified",
+        "specified",
+        "unknown",
+        "tbd",
+        "incomplete",
+        "not",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "to",
+        "and",
+        "or",
+        "of",
+        "for",
+        "the",
+        "a",
+        "an",
+        "with",
+        "provided",
+        "defined",
+        "available",
+        "detail",
+        "details",
+        "needed",
+        "need",
+        "only",
+        "explicit",
+        "valid",
+        "exact",
+        "json",
+        "yaml",
+        "yml",
+        "xml",
+        "csv",
+        "uri",
+        "uris",
+        "url",
+        "urls",
+        "string",
+        "strings",
+        "object",
+        "objects",
+        "record",
+        "records",
+        "manifest",
+        "manifests",
+    }
+)
+
+
+def is_actionability_advisory_concern(concern: dict, advisory_gaps: list[str]) -> bool:
+    """Return whether an analyzer concern is covered by a non-blocking advisory gap.
+
+    Analyzer concerns are filtered before document groups are counted. Version/build concerns are
+    advisory only when each named product has its matching advisory evidence, and test-data
+    format/example concerns can be advisory. Material API, RBAC, security, and operational
+    concerns remain ordinary gaps. ``schema`` is material by default; an explicitly test-data-
+    scoped schema is the one exception needed for fixture/payload descriptions.
+    """
+    text = " ".join(concern.get("text", "").split())
+    if not text:
+        return False
+
+    normalized_advisories = {advisory.casefold() for advisory in advisory_gaps}
+    has_version_advisory = any(label.casefold() in normalized_advisories for label in ACTIONABILITY_VERSION_LABELS)
+    has_test_data_advisory = ACTIONABILITY_TEST_DATA_GAP.casefold() in normalized_advisories
+    if not has_version_advisory and not has_test_data_advisory:
+        return False
+    if _OPERATOR_VERSION_REQUIREMENT_RE.search(text):
+        return False
+
+    required_version_advisories = {
+        label.casefold() for label, pattern in _VERSION_PRODUCT_PATTERNS.items() if pattern.search(text)
+    }
+    if (
+        has_version_advisory
+        and _VERSION_ONLY_GAP_RE.search(text)
+        and (not required_version_advisories or not required_version_advisories.issubset(normalized_advisories))
+    ):
+        return False
+
+    material_terms = _MATERIAL_GAP_RE.findall(text)
+    if material_terms:
+        non_schema_terms = [term for term in material_terms if term.casefold() != "schema"]
+        if (
+            non_schema_terms
+            or not _TEST_DATA_SCHEMA_CONTEXT_RE.search(text)
+            or _MATERIAL_SCHEMA_CONTEXT_RE.search(text)
+        ):
+            return False
+
+    words = re.findall(r"[a-z0-9]+", text.casefold())
+
+    def uses_only(allowed_terms: frozenset[str]) -> bool:
+        return bool(words) and all(
+            word in allowed_terms or word.isdigit() or re.fullmatch(r"(?:v|ea|ga)\d+", word) for word in words
+        )
+
+    return bool(
+        (has_version_advisory and _VERSION_ONLY_GAP_RE.search(text) and uses_only(_VERSION_ONLY_TERMS))
+        or (has_test_data_advisory and _TEST_DATA_ONLY_GAP_RE.search(text) and uses_only(_TEST_DATA_ONLY_TERMS))
+    )
 
 
 def _extract_gaps_section(raw_text: str) -> str:
@@ -203,13 +455,18 @@ def _first_seen_sources(concerns: list[dict]) -> list[str]:
     return seen
 
 
-def consolidate_gaps(sources: dict[str, str], feature_name: str = "") -> dict:
+def consolidate_gaps(
+    sources: dict[str, str], feature_name: str = "", *, concern_filter: Callable[[dict], bool] | None = None
+) -> dict:
     """Consolidate raw ## Gaps markdown from multiple analyzers into deduplicated groups.
 
     Args:
         sources: maps analyzer name ("endpoints"|"risks"|"infra") -> raw ## Gaps markdown text.
         feature_name: feature name for the rendered body's `# Gaps — <Feature Name>` header.
             Optional for unit-testing the pure grouping logic; the CLI always supplies it.
+        concern_filter: optional predicate applied to parsed concerns before grouping. A concern
+            for which the predicate returns True is omitted from the consolidated groups. The
+            default keeps every analyzer concern, including malformed bullets.
 
     Returns:
         {"gap_count": int, "status": "Open"|"Resolved", "body": <markdown flat list>,
@@ -218,7 +475,10 @@ def consolidate_gaps(sources: dict[str, str], feature_name: str = "") -> dict:
     # Preserve source order (endpoints, risks, infra) as given by the caller's dict.
     all_concerns = []
     for source_name, raw_text in sources.items():
-        all_concerns.extend(_parse_source(source_name, raw_text))
+        concerns = _parse_source(source_name, raw_text)
+        if concern_filter is not None:
+            concerns = [concern for concern in concerns if not concern_filter(concern)]
+        all_concerns.extend(concerns)
 
     # Group by normalized doc type; within each group, dedup concern text
     # case-insensitively while keeping first-seen casing and order.

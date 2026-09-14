@@ -3,7 +3,7 @@
 ## Purpose
 
 These files train the **test-plan.score.test-function** scorer agent to distinguish
-high-quality tests (9-10/10) from low-quality tests (3-4/10).
+high-quality tests (9-10/10) from low-quality tests (2/10).
 
 **Key distinction:**
 
@@ -59,7 +59,7 @@ For Cypress (in `ui/`) and for Go/TypeScript (via team dirs when added), calibra
 files:
 
 - Reference Tiger Team rules for patterns (avoid duplication)
-- Focus on demonstrating QUALITY LEVEL (9/10 vs 3/10)
+- Focus on demonstrating QUALITY LEVEL (9/10 vs 2/10)
 - Show complete examples with explicit rubric scoring
 
 ### Frameworks WITHOUT Tiger Team Rules
@@ -92,23 +92,32 @@ Each file has a header with:
 
 ## Scoring Rubric
 
+> The authoritative rubric lives in `../prompts/score-test-function.md`. Keep the two in sync —
+> the summaries below must reflect the same criteria.
+
 ### Coverage (0-2 points)
 
-- **2**: All TC requirements implemented (preconditions, steps, assertions)
+- **2**: All TC requirements implemented (preconditions, steps, assertions). Mandatory
+  active-feature preconditions gated with `pytest.fail`, not `skip`
 - **1**: Missing 1-2 items, or has TODOs for specified requirements
-- **0**: Missing major sections or mostly TODOs
+- **0**: Missing major sections, or mostly TODOs
 
 ### Assertions (0-2 points)
 
-- **2**: Specific assertions with clear messages
-- **1**: Some generic assertions or missing messages
-- **0**: Mostly generic assertions or expected results have TODOs
+- **2**: Specific, feature-specific assertions with clear messages. Tight, not loose: exact type
+  checks over broad ABCs (`float`, not `numbers.Real`, which also accepts `int`/`bool`); finiteness
+  checks (reject `NaN`/`inf`); non-empty collection checked before indexing (`choices[0]`); iterates
+  **all** candidates (containers/files/matches), not just the first
+- **1**: Some generic assertions, missing messages, or a loose/probabilistic assertion
+- **0**: Mostly generic "false-green" assertions, probabilistic assertions on model output, or
+  expected results have TODOs
 
 ### Conventions (0-2 points)
 
-- **2**: Follows framework patterns and repo conventions
+- **2**: Follows framework patterns and repo conventions; registered markers, correct tier,
+  `skip_on_disconnected` on live-external tests
 - **1**: Mostly follows with 1-2 deviations
-- **0**: Uses patterns not in conventions, invents markers/helpers
+- **0**: Uses patterns not in conventions, invents/unregistered markers, negative tests in wrong tier
 
 ### Test Data (0-2 points)
 
@@ -118,9 +127,10 @@ Each file has a header with:
 
 ### Code Quality (0-2 points)
 
-- **2**: No TODOs for specified requirements, clean implementation
+- **2**: No TODOs for specified requirements, clean implementation, bounded loops, safe helpers
 - **1**: Some TODOs for unclear items, minor issues
-- **0**: Many TODOs for TC-specified items, fabricated helpers
+- **0**: Many TODOs for TC-specified items, fabricated helpers, unbounded loops, or unsafe helper
+  code (shell injection, substring-vs-exact, unhandled enum)
 
 ## Verdict Mapping
 

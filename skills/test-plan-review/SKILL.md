@@ -86,7 +86,7 @@ If installation fails, inform the user and do NOT proceed. Once installed, all P
    actionability_result=$(echo "$gate_result" | jq -c '.actionability_result')
    ```
 
-   A nonzero exit means gate-input construction itself failed (unreadable strategy file, a parsing bug) — that's an execution failure, not data about the test plan, so stop rather than silently falling back to degraded mode. With the pre-create-cases guards, `valid: true` is expected before test cases exist — both Section 9.2 (Test Cases column blank) and Section 6.2 are recognized as not-yet-populated and skipped. Once Section 6.2 is populated, `missing_e2e_or_ui_in_6_2` identifies declared, non-pending interfaces with a populated row that lacks both a `TC-E2E-*` and a `TC-UI-*` reference; each populated row must contain at least one `TC-E2E-*` or `TC-UI-*` reference. `missing_in_6_2` continues to identify absent or blank/placeholder interface rows. A `valid: false` here signals a genuine coverage gap; pass it as data to the score agent.
+   A nonzero exit means gate-input construction itself failed (unreadable strategy file, a parsing bug) — that's an execution failure, not data about the test plan, so stop rather than silently falling back to degraded mode. With the pre-create-cases guards, `valid: true` is expected before test cases exist — both Section 9.2 (Test Cases column blank) and Section 6.2 are recognized as not-yet-populated and skipped. Once Section 6.2 is populated, `missing_e2e_or_ui_in_6_2` identifies declared, non-pending interfaces with a populated row that lacks both a `TC-E2E-*` and a `TC-UI-*` reference; each populated row must contain at least one `TC-E2E-*` or `TC-UI-*` reference. `missing_in_6_2` continues to identify absent or blank/placeholder interface rows. The actionability payload's `valid` field reflects only blocking evidence (`bare_tbd` and `missing_details`); `advisory_gaps` records missing or vague versions and incomplete test-data examples for visibility. Pass both kinds of actionability evidence to the score agent. Section 3.1 must contain substantive environment/configuration evidence; a heading or vague/unavailable-only statement remains blocking even when it is non-empty. The validator applies the same occurrence-level TBD classifier to Sections 3.1, 3.2, and 3.3: a grounded `TBD — Resolution: ...` path is allowed, including `derive` from a named overlay requirement, but a bare or unresolved TBD remains blocking. RBAC evidence must identify a role, permissions, and a concrete resource; `all`/`any`/`every` collections and wildcard resources are not concrete. Examples count only in explicit example labels/table columns or `e.g.,`/`for example` clauses.
 
 5. Resolve `additional_docs` from TestPlan.md frontmatter deterministically — path validation and file reading happen in Python, not in the LLM prompt. The script reads frontmatter itself (the LLM is not in the trust path for path resolution):
 
@@ -178,8 +178,8 @@ The score agent evaluates the test plan against a 5-criterion rubric (specificit
 | 1.3 Test Objectives | Is there at least one objective per STRAT acceptance criterion (every AC covered), plus grounded NFR objectives where applicable? |
 | 2.1 Test Levels | Are the selected levels appropriate for the feature type? |
 | 2.3 Priorities | Are P0/P1/P2 definitions specific to this feature, not generic? |
-| 3.1 Cluster Config | Are versions and dependencies specified or marked TBD? |
-| 3.2 Test Data | Are test data requirements concrete enough to act on? |
+| 3.1 Cluster Config | Is substantive environment/configuration evidence present, with versions/dependencies specified or unknowns recorded with an explicit resolution path? Vague/unavailable-only content and bare/unresolved TBDs are blocking; missing/vague versions remain advisory when the section is otherwise substantive. |
+| 3.2 Test Data | Are test-data requirements concrete enough to act on, with incomplete format/examples retained as advisory gaps? |
 | 4 Interfaces Under Test | Are entries grounded in source documents, not fabricated? |
 | 6.1 E2E Scenarios | Is the E2E Scenario Summary populated with TC-E2E-* entries? (Note: expected to be empty until create-cases runs) |
 | 6.2 E2E Coverage | Does each non-pending interface from Section 4 have at least one `TC-E2E-*` or `TC-UI-*` reference in each populated Section 6.2 row? Checked deterministically via `interface-coverage` (Step 1), not LLM table-reading. (Note: expected to be empty until create-cases runs) |
@@ -212,7 +212,11 @@ The review agent writes `<feature_dir>/TestPlanReview.md` with rubric scores, fe
 
 ### Step 3.5: Enforce Citation Gate
 
-Deterministically re-apply the Scope Fidelity/Specificity caps the review agent was instructed to self-apply but might not have — `enforce_citation_gate.py` always exits 0 and reports outcome as JSON:
+Deterministically re-apply the Scope Fidelity/Specificity caps and Actionability correction the
+review agent was instructed to self-apply but might not have — `enforce_citation_gate.py` always
+exits 0 and reports outcome as JSON. Blocking Actionability evidence caps a recorded score above
+1 to 1/2; valid Actionability never raises a recorded 0/1. The `actionability_capped` result field
+is true only when that blocking cap changes the score.
 
 ```bash
 repo_root=$(git -C ${CLAUDE_SKILL_DIR} rev-parse --show-toplevel)
@@ -242,9 +246,13 @@ After the review agent completes, read the review frontmatter:
 (cd $(git -C ${CLAUDE_SKILL_DIR} rev-parse --show-toplevel) && uv run python scripts/frontmatter.py read <feature_dir>/TestPlanReview.md)
 ```
 
-If all five criteria in `scores.*` are `2`, proceed to Step 5 (done).
+If all five criteria in `scores.*` are `2`, proceed to Step 5 (done). This can be a Ready result
+even when `actionability_result.advisory_gaps` is non-empty; advisory actionability gaps are
+visible follow-up items, not revision failures.
 
-If any criterion in `scores.*` is `< 2`, enter the revision loop.
+If any criterion in `scores.*` is `< 2`, enter the revision loop. Do not enter it solely because
+`advisory_gaps` contains missing or vague OpenShift/RHOAI versions or incomplete test-data
+format/examples.
 
 #### Revision Loop
 
@@ -378,13 +386,15 @@ Read the final review file and present a summary to the user:
 **Delta: {before_score} → {score} ({+/-difference})**
 
 {If verdict = Ready:}
-The test plan is ready for test case generation. Run `/test-plan-create-cases <feature_dir>` to proceed.
+The test plan is ready for test case generation. Any `actionability_result.advisory_gaps` remain
+visible follow-up items in `TestPlanGaps.md` and do not block this step. Run
+`/test-plan-create-cases <feature_dir>` to proceed.
 
 {If verdict = Revise (after max cycles):}
-The test plan improved but still has issues. Review `<feature_dir>/TestPlanReview.md` for remaining feedback. Consider providing additional source documents (ADR, API spec) to resolve grounding gaps.
+The test plan improved but still has issues. Review `<feature_dir>/TestPlanReview.md` for remaining feedback. Consider providing additional source documents (ADR, API spec) to resolve blocking grounding or operational gaps; advisory actionability gaps alone do not require them.
 
 {If verdict = Rework:}
-The test plan needs significant rework. This may indicate the source strategy lacks sufficient detail. Review `<feature_dir>/TestPlanReview.md` for specific issues.
+The test plan needs significant rework. This may indicate the source strategy lacks sufficient detail. Review `<feature_dir>/TestPlanReview.md` for specific issues and provide source documents for blocking grounding or operational gaps; advisory actionability gaps alone do not require them.
 
 {If this plan is already in an open PR and reviewer comments exist:}
 Use `/test-plan-resolve-feedback <PR_URL>` to triage and apply PR feedback items.
@@ -402,9 +412,9 @@ When reviewing and suggesting improvements, the score agent MUST follow these co
 - Create specificity improvements by inventing details
 
 **ALWAYS**:
-- For `actionability == 2`, retain an unknown only as `TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}`. The resolution path must be grounded in an actual source or a known owner/timing.
+- For `actionability == 2`, retain a genuinely unknown required value only as `TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}`. The resolution path must be grounded in an actual source or a known owner/timing; `derive` is valid when the named source grounds the derivation. Apply this rule independently to each TBD in Sections 3.1, 3.2, and 3.3. Missing or vague OpenShift/RHOAI versions and incomplete test-data format/examples may remain as advisory gaps and do not by themselves prevent Actionability 2/2.
 - Ground all improvements in actual source document content (strategy, ADR, additional_docs)
-- Flag missing information without a grounded resolution path as a gap; it must not support an Actionability score of 2/2
+- Keep bare/unresolved TBDs, missing or non-substantive Section 3.1 environment/configuration, and unusable or broad-collection RBAC evidence as blocking actionability gaps; they must not support an Actionability score of 2/2. Keep advisory gaps visible in TestPlanGaps.md without requesting source documents solely for those advisories.
 - Defer to TestPlanGaps.md for unresolved items
 - Only suggest changes that are directly traceable to source material
 

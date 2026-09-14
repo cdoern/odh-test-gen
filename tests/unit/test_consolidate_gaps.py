@@ -7,8 +7,9 @@ CLI tests are in tests/integration/test_consolidate_gaps_cli.py.
 
 import pytest
 
-from scripts.utils.consolidate_gaps import consolidate_gaps, read_sources
+from scripts.utils.consolidate_gaps import consolidate_gaps, is_actionability_advisory_concern, read_sources
 from tests.consts.gaps_constants import (
+    ACTIONABILITY_PRODUCT_ADVISORY_CASES,
     GAPS_ALL_EMPTY,
     GAPS_BULLET_THEN_NO_GAPS_LINE,
     GAPS_CAPITALIZED_RESOLVED_BY,
@@ -36,6 +37,25 @@ from tests.consts.gaps_constants import (
     GAPS_WRAPPED_BULLET,
     GAPS_WRAPPED_THEN_NORMAL,
 )
+
+
+class TestActionabilityAdvisoryFiltering:
+    @pytest.mark.parametrize(
+        "concern_text, advisory_gaps, expected_filtered",
+        ACTIONABILITY_PRODUCT_ADVISORY_CASES,
+        ids=(
+            "openshift-advisory-filters-openshift-concern",
+            "openshift-advisory-retains-rhoai-concern",
+            "rhoai-advisory-filters-rhoai-concern",
+            "rhoai-advisory-retains-openshift-concern",
+            "rhoai-advisory-retains-material-operator-compatibility-concern",
+            "rhoai-advisory-retains-material-operator-version-concern",
+        ),
+    )
+    def test_advisory_filtering_is_product_specific(self, concern_text, advisory_gaps, expected_filtered):
+        concern = {"text": concern_text}
+
+        assert is_actionability_advisory_concern(concern, list(advisory_gaps)) is expected_filtered
 
 
 class TestConsolidateSameGapArtifact:

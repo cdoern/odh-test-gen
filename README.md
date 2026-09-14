@@ -157,10 +157,19 @@ consumed by skills, and use standard command-line JSON tooling to pass values be
 
 `validate_quality_evidence.py` produces the scope coverage and actionability evidence payloads
 from the test plan and resolved strategy: `scope_coverage_result` and `actionability_result`.
-The persisted review gate (`enforce_citation_gate.py`) can cap Scope Fidelity/Specificity/Actionability
-when deterministic evidence contradicts a 2/2 rubric score. The stateless scorer gate
-(`cap_scope_fidelity.py`) applies the same Scope Fidelity/Specificity/Actionability caps before
-`test-plan-score` presents its result, so scorer compliance is not trusted.
+The actionability payload separates blocking `bare_tbd`/`missing_details` from non-blocking
+`advisory_gaps`; the latter remain visible in `TestPlanGaps.md` but do not cap scores or trigger
+revision by themselves. The persisted review gate (`enforce_citation_gate.py`) can cap Scope
+Fidelity/Specificity and blocking Actionability evidence when deterministic evidence contradicts
+a 2/2 rubric score; valid non-blocking Actionability preserves the scorer's recorded score.
+The stateless scorer gate
+(`cap_scope_fidelity.py`) applies the same Scope Fidelity/Specificity caps and Actionability
+correction before `test-plan-score` presents its result, so scorer compliance is not trusted.
+
+During gap collection, analyzer concerns that are version/build-only or
+test-data-format/example-only are reclassified as advisory only when the actionability payload
+reports the matching advisory; other analyzer concerns remain counted and trigger the normal
+document-request flow.
 
 The shared `build_citation_inputs.py` gate also checks AC citations, AC coverage, interface coverage,
 scope markers, and actionability before review or scoring. Once Section 6.2 is populated, each declared

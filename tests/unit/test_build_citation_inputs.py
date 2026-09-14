@@ -11,6 +11,7 @@ import pytest
 from scripts.build_citation_inputs import build_citation_inputs, main
 from scripts.utils.schemas import TEMPLATE_HEADINGS
 from tests.consts.test_plan_constants import TESTPLAN_INTERFACE_COVERAGE_UI_ONLY_6_2
+from tests.consts.validation_constants import ACTIONABILITY_ADVISORY_GAPS_PLAN
 from tests.helpers import objectives_citing_every_ac, write_testplan_with_objectives
 
 E2E_OR_UI_DIAGNOSTIC_KEY = "missing_e2e_or_ui_in_6_2"
@@ -101,6 +102,26 @@ class TestBuildCitationInputs:
         assert result["actionability_result"]["valid"] is True
         assert result["actionability_result"]["bare_tbd"] == []
         assert result["actionability_result"]["missing_details"] == []
+
+    def test_quality_gate_inputs_preserve_advisory_actionability_gaps(self, tmp_path):
+        write_testplan_with_objectives(
+            tmp_path / "TestPlan.md",
+            f"1. Verify registration (AC: #1 — registration succeeds)\n\n{ACTIONABILITY_ADVISORY_GAPS_PLAN}",
+        )
+        strategy_file = tmp_path / ".source-strategy.md"
+        strategy_file.write_text("h3. Acceptance Criteria\n\n# Given a user registers a store, then it persists\n")
+
+        result = build_citation_inputs(str(tmp_path), str(strategy_file))
+
+        actionability = result["actionability_result"]
+        assert actionability["valid"] is True
+        assert {
+            "OpenShift version",
+            "RHOAI version",
+            "test data formats and examples",
+        } <= set(actionability["advisory_gaps"])
+        assert actionability["bare_tbd"] == []
+        assert actionability["missing_details"] == []
 
     def test_missing_testplan_is_an_ordinary_invalid_result_not_an_execution_failure(self, tmp_path):
         strategy_file = tmp_path / ".source-strategy.md"

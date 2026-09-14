@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Force-correct Scope Fidelity and Specificity when the review agent disagrees with the
+"""Force-correct Scope Fidelity, Specificity, and Actionability when the review agent disagrees with the
 deterministic checks it was given.
 
 score-agent.md instructs the LLM to read ac_citations_result.valid / ac_coverage_result.valid /
-scope_check_result.valid directly and cap Scope Fidelity to <= 1 when any is false, and to cap
-Specificity per boilerplate_result.total_violations — but LLM compliance with those instructions
-isn't guaranteed. This re-applies the same rules after TestPlanReview.md is written: overriding
-the recorded score when it's inconsistent with the already-computed results, and injecting a
-deterministic feedback note (which objectives are uncited/invalid, which AC numbers are missing,
-which Section 2.1 levels are disallowed, which sections have boilerplate language) so the revise
-agent has something concrete to act on even if the review agent's own prose feedback missed it.
+scope_check_result.valid directly and cap Scope Fidelity to <= 1 when any is false, cap
+Actionability when blocking actionability evidence is present, and cap Specificity per
+boilerplate_result.total_violations — but LLM compliance with those instructions isn't guaranteed.
+This re-applies the same rules after TestPlanReview.md is written: overriding the recorded score
+when it's inconsistent with the already-computed results, and injecting a deterministic feedback
+note (which objectives are uncited/invalid, which AC numbers are missing, which Section 2.1
+levels are disallowed, which sections have boilerplate language, and which blocking actionability
+gaps remain) so the revise agent has something concrete to act on even if the review agent's own
+prose feedback missed it.
 
 Usage:
     python3 scripts/enforce_citation_gate.py <feature_dir> \
@@ -34,6 +36,7 @@ import yaml
 from scripts.utils.error_utils import exit_graceful
 from scripts.utils.frontmatter_utils import read_frontmatter_validated, update_frontmatter
 from scripts.utils.schemas import REVIEW_CRITERIA, ValidationError, compute_verdict_and_pass
+from scripts.validate_quality_evidence import validate_actionability_result
 
 FEEDBACK_HEADING = "## Section-by-Section Feedback"
 
@@ -265,14 +268,9 @@ def _validate_scope_coverage_for_capping(result: dict, name: str) -> None:
     _validate_gap_evidence(result, name, ("missing", "unmapped_objectives"), _validate_scope_coverage_entries)
 
 
-def _validate_actionability_entries(entries, name: str, key: str) -> None:
-    if not isinstance(entries, list) or any(not isinstance(entry, str) or not entry for entry in entries):
-        raise ValueError(f"{name}.{key} must be a list of non-empty strings")
-
-
 def _validate_actionability_for_capping(result: dict, name: str) -> None:
     """Validate required actionability evidence before any score or review update."""
-    _validate_gap_evidence(result, name, ("bare_tbd", "missing_details"), _validate_actionability_entries)
+    validate_actionability_result(result, name)
 
 
 def _validate_required_quality_result(result: dict | None, name: str, validator) -> None:
@@ -327,17 +325,28 @@ def cap_scope_fidelity(
 
 
 def cap_actionability(scores: dict, actionability_result: dict) -> dict:
-    """Cap Actionability to 1 when its deterministic evidence contains a gap."""
+    """Preserve valid Actionability, or cap it to 1 for blocking evidence."""
     _validate_scores(scores)
     _validate_required_quality_result(actionability_result, "actionability_result", _validate_actionability_for_capping)
 
     scores = dict(scores)
-    if actionability_result["valid"] or scores["actionability"] <= 1:
-        return {"overridden": False, "scores": scores}
+    blocking_gaps = actionability_result["bare_tbd"] or actionability_result["missing_details"]
+    if blocking_gaps:
+        if scores["actionability"] <= 1:
+            return {"overridden": False, "scores": scores}
 
-    scores["actionability"] = 1
-    verdict, score, passed = compute_verdict_and_pass(scores)
-    return {"overridden": True, "scores": scores, "score": score, "pass": passed, "verdict": verdict}
+        scores["actionability"] = 1
+        verdict, score, passed = compute_verdict_and_pass(scores)
+        return {
+            "overridden": True,
+            "scores": scores,
+            "score": score,
+            "pass": passed,
+            "verdict": verdict,
+            "actionability_capped": True,
+        }
+
+    return {"overridden": False, "scores": scores}
 
 
 def cap_specificity(scores: dict, boilerplate_result: dict) -> dict:
@@ -369,7 +378,7 @@ def apply_score_caps(
     scope_coverage_result: dict,
     actionability_result: dict,
 ) -> dict:
-    """Apply the Scope Fidelity and Specificity caps together and return one combined result.
+    """Apply Scope Fidelity and Specificity caps plus Actionability correction together and return one combined result.
 
     Specificity is capped against the *post-Scope-Fidelity* scores dict (not the original), so
     if both criteria need correcting, the final score/verdict/pass reflect both — not just
@@ -390,15 +399,16 @@ def apply_score_caps(
     specificity_result = cap_specificity(actionability_cap_result["scores"], boilerplate_result)
 
     scope_fidelity_capped = scope_result["overridden"]
-    actionability_capped = actionability_cap_result["overridden"]
+    actionability_overridden = actionability_cap_result["overridden"]
+    actionability_capped = actionability_cap_result.get("actionability_capped", False)
     specificity_capped = specificity_result["overridden"]
-    if not scope_fidelity_capped and not actionability_capped and not specificity_capped:
+    if not scope_fidelity_capped and not actionability_overridden and not specificity_capped:
         return {"overridden": False, "scores": specificity_result["scores"]}
 
     final = (
         specificity_result
         if specificity_capped
-        else (actionability_cap_result if actionability_capped else scope_result)
+        else (actionability_cap_result if actionability_overridden else scope_result)
     )
     return {
         "overridden": True,
@@ -421,7 +431,7 @@ def enforce_citation_gate(
     scope_coverage_result: dict,
     actionability_result: dict,
 ) -> dict | None:
-    """Cap Scope Fidelity/Specificity if the deterministic checks say they should be, but the
+    """Cap Scope Fidelity/Specificity/Actionability if deterministic checks require it, but the
     persisted review scores disagree. Returns None if TestPlanReview.md doesn't exist.
     """
     _require_valid_field(ac_citations_result, "ac_citations_result")
@@ -491,7 +501,16 @@ def enforce_citation_gate(
     update_frontmatter(review_path, updates, "test-plan-review")
     _insert_feedback_note(review_path, note)
 
-    return {"overridden": True, "scores": scores, "score": score, "pass": passed, "verdict": verdict}
+    return {
+        "overridden": True,
+        "scores": scores,
+        "score": score,
+        "pass": passed,
+        "verdict": verdict,
+        "scope_fidelity_capped": scope_fidelity_capped,
+        "actionability_capped": actionability_capped,
+        "specificity_capped": specificity_capped,
+    }
 
 
 def _fail(message: str) -> None:

@@ -100,11 +100,12 @@ INVALID_SCOPE_COVERAGE_REVERSE = {
         }
     ],
 }
-VALID_ACTIONABILITY = {"valid": True, "bare_tbd": [], "missing_details": []}
+VALID_ACTIONABILITY = {"valid": True, "bare_tbd": [], "missing_details": [], "advisory_gaps": []}
 INVALID_ACTIONABILITY = {
     "valid": False,
     "bare_tbd": ["OpenShift version", "RHOAI version"],
     "missing_details": ["RBAC roles and permissions"],
+    "advisory_gaps": [],
 }
 BOILERPLATE_THREE_VIOLATIONS = {
     "valid": False,
@@ -261,127 +262,394 @@ NOT_APPLICABLE_NFR_CASES = tuple(
     for section in NOT_APPLICABLE_NFR_SECTIONS
 )
 
-ACTIONABILITY_CONCRETE_DATA_AND_RBAC = f"""{TEMPLATE_HEADINGS["3.2"]}
 
-| Format | Example |
+def _compose_actionability_sections(*sections: str) -> str:
+    """Join complete Section 3 fixtures while keeping one consistent Markdown layout."""
+    return "\n\n".join(section.strip() for section in sections) + "\n"
+
+
+def _actionability_section(section: str, body: str) -> str:
+    return f"{TEMPLATE_HEADINGS[section]}\n\n{body.strip()}\n"
+
+
+def _build_actionability_plan(infrastructure: str, test_data: str, users: str) -> str:
+    """Build a plan from subsection bodies without repeating Section 3 headings in every fixture."""
+    return _compose_actionability_sections(
+        _actionability_section("3.1", infrastructure),
+        _actionability_section("3.2", test_data),
+        _actionability_section("3.3", users),
+    )
+
+
+_ACTIONABILITY_CONCRETE_INFRASTRUCTURE = """OpenShift version: 4.18
+RHOAI version: 2.25"""
+
+_ACTIONABILITY_CONCRETE_DATA = """| Format | Example |
 |--------|---------|
-| JSON object with a unique name | {{"name": "orders"}} |
+| JSON object with a unique name | {"name": "orders"} |"""
 
-{TEMPLATE_HEADINGS["3.3"]}
+_ACTIONABILITY_CONCRETE_DATA_WITH_BARE_TBD = f"""{_ACTIONABILITY_CONCRETE_DATA}
+- Invalid HF token value: TBD"""
 
-| Role | Resource | Permissions |
+_ACTIONABILITY_CONCRETE_DATA_WITH_RESOLVED_TBD = f"""{_ACTIONABILITY_CONCRETE_DATA}
+- Invalid HF token value: TBD — Resolution: obtain a concrete invalid token fixture before test execution."""
+
+_ACTIONABILITY_CONCRETE_RBAC = """| Role | Resource | Permissions |
 |------|----------|-------------|
-| QE administrator | vector-store resources | create, get, delete |
-"""
+| QE administrator | vector-store resources | create, get, delete |"""
 
-ACTIONABILITY_TBD_UNKNOWN_PLAN = f"""{TEMPLATE_HEADINGS["3.1"]}
+ACTIONABILITY_CONCRETE_RBAC_SECTION = _actionability_section("3.3", _ACTIONABILITY_CONCRETE_RBAC)
+ACTIONABILITY_CONCRETE_DATA_AND_RBAC = _compose_actionability_sections(
+    _actionability_section("3.2", _ACTIONABILITY_CONCRETE_DATA),
+    ACTIONABILITY_CONCRETE_RBAC_SECTION,
+)
 
-OpenShift version: TBD — unknown
-RHOAI version: 2.25
+ACTIONABILITY_CONCRETE_DATA_WITH_BARE_TBD_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    _ACTIONABILITY_CONCRETE_DATA_WITH_BARE_TBD,
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
 
-{ACTIONABILITY_CONCRETE_DATA_AND_RBAC}
-"""
+ACTIONABILITY_CONCRETE_DATA_WITH_RESOLVED_TBD_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    _ACTIONABILITY_CONCRETE_DATA_WITH_RESOLVED_TBD,
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
 
-ACTIONABILITY_TBD_DATA_PLAN = f"""{TEMPLATE_HEADINGS["3.1"]}
+ACTIONABILITY_TBD_UNKNOWN_PLAN = _build_actionability_plan(
+    """OpenShift version: TBD — unknown
+RHOAI version: 2.25""",
+    _ACTIONABILITY_CONCRETE_DATA,
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
 
-OpenShift version: 4.18
-RHOAI version: 2.25
+ACTIONABILITY_TBD_DATA_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    "Payload format: TBD; Example: TBD",
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
 
-{TEMPLATE_HEADINGS["3.2"]}
+ACTIONABILITY_PROSE_RBAC_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    _ACTIONABILITY_CONCRETE_DATA,
+    "The test user role has permissions and can access the environment.",
+)
 
-Payload format: TBD; Example: TBD
+ACTIONABILITY_GENERIC_PROSE_RBAC_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    _ACTIONABILITY_CONCRETE_DATA,
+    "The test user can create, get, and delete all resources.",
+)
 
-{TEMPLATE_HEADINGS["3.3"]}
+ACTIONABILITY_CONCRETE_PROSE_RBAC_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    _ACTIONABILITY_CONCRETE_DATA,
+    "The qe-test-user can create, get, and delete vector-store resources.",
+)
 
-| Role | Resource | Permissions |
-|------|----------|-------------|
-| QE administrator | vector-store resources | create, get, delete |
-"""
-
-ACTIONABILITY_PROSE_RBAC_PLAN = f"""{TEMPLATE_HEADINGS["3.1"]}
-
-OpenShift version: 4.18
-RHOAI version: 2.25
-
-{TEMPLATE_HEADINGS["3.2"]}
-
-| Format | Example |
-|--------|---------|
-| JSON object with a unique name | {{"name": "orders"}} |
-
-{TEMPLATE_HEADINGS["3.3"]}
-
-The test user role has permissions and can access the environment.
-"""
-
-ACTIONABILITY_GENERIC_PROSE_RBAC_PLAN = f"""{TEMPLATE_HEADINGS["3.1"]}
-
-OpenShift version: 4.18
-RHOAI version: 2.25
-
-{TEMPLATE_HEADINGS["3.2"]}
-
-| Format | Example |
-|--------|---------|
-| JSON object with a unique name | {{"name": "orders"}} |
-
-{TEMPLATE_HEADINGS["3.3"]}
-
-The test user can create, get, and delete all resources.
-"""
-
-ACTIONABILITY_CONCRETE_PROSE_RBAC_PLAN = f"""{TEMPLATE_HEADINGS["3.1"]}
-
-OpenShift version: 4.18
-RHOAI version: 2.25
-
-{TEMPLATE_HEADINGS["3.2"]}
-
-| Format | Example |
-|--------|---------|
-| JSON object with a unique name | {{"name": "orders"}} |
-
-{TEMPLATE_HEADINGS["3.3"]}
-
-The qe-test-user can create, get, and delete vector-store resources.
-"""
-
-ACTIONABILITY_RBAC_WITHOUT_RESOURCE_PLAN = f"""{TEMPLATE_HEADINGS["3.1"]}
-
-OpenShift version: 4.18
-RHOAI version: 2.25
-
-{TEMPLATE_HEADINGS["3.2"]}
-
-Registration payload: JSON object; Example: {{"name": "orders"}}
-
-{TEMPLATE_HEADINGS["3.3"]}
-
-| Role | Permissions |
+ACTIONABILITY_RBAC_WITHOUT_RESOURCE_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    'Registration payload: JSON object; Example: {"name": "orders"}',
+    """| Role | Permissions |
 |------|-------------|
-| QE administrator | create, get, delete |
-"""
+| QE administrator | create, get, delete |""",
+)
 
-ACTIONABILITY_DELIMITED_DATA_PLACEHOLDER_PLAN = f"""{TEMPLATE_HEADINGS["3.1"]}
+ACTIONABILITY_BROAD_RBAC_TABLE_PLANS = tuple(
+    _build_actionability_plan(
+        _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+        _ACTIONABILITY_CONCRETE_DATA,
+        _ACTIONABILITY_CONCRETE_RBAC.replace("vector-store resources", resource),
+    )
+    for resource in (
+        "all namespaces",
+        "all projects",
+        "any resources",
+        "all vector-store resources",
+        "every service account",
+    )
+)
 
-OpenShift version: 4.18
+ACTIONABILITY_DELIMITED_DATA_PLACEHOLDER_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    "Registration payload: JSON object; Example: {placeholder}",
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
+
+# Keep an independent Section 3.1 detail so resolution-path tests cannot pass solely because a
+# version field happens to make the section look substantive.
+ACTIONABILITY_JUSTIFIED_TBD_RESOLUTION = (
+    "retrieve the supported-platform matrix from platform engineering before setup."
+)
+
+ACTIONABILITY_JUSTIFIED_TBD_PLAN = _build_actionability_plan(
+    f"""OpenShift version: TBD — Resolution: {ACTIONABILITY_JUSTIFIED_TBD_RESOLUTION}
 RHOAI version: 2.25
+KServe deployment uses GPU nodes in the test namespace.""",
+    _ACTIONABILITY_CONCRETE_DATA,
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
 
-{TEMPLATE_HEADINGS["3.2"]}
+ACTIONABILITY_RESOLUTION_TARGET_BOUNDARY_CASES = (
+    ("confirm with someone", False),
+    ("confirm the version with the test team", False),
+    ("confirm the version with the team", False),
+    ("confirm the version with the feature owner", False),
+    ("confirm the version with engineering", False),
+    ("confirm the version with the engineering team", False),
+    ("confirm the version with the test engineering team", False),
+    ("confirm the supported version with\n  Owner: test team", False),
+    ("retrieve the supported-platform matrix from platform engineering before setup.", True),
+    ("confirm the supported version before environment setup.", True),
+    ("confirm the supported version by the end of environment setup.", True),
+    ("obtain the supported version from RHAISTRAT-1234.", True),
+)
 
-Registration payload: JSON object; Example: {{placeholder}}
+_ACTIONABILITY_WRAPPED_RBAC_RESOLUTION_USERS = """- Cluster admin with permissions to manage catalog sources and
+  HF tokens — exact ClusterRole/Role name: `TBD — Resolution: confirm
+  required RBAC role (cluster-admin vs. dedicated catalog-admin) with
+  Platform team per strategy open question (Owner: Platform team)`
+- QE test users can get and create vector-store resources in serving namespaces."""
 
-{TEMPLATE_HEADINGS["3.3"]}
+ACTIONABILITY_WRAPPED_RBAC_RESOLUTION_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    _ACTIONABILITY_CONCRETE_DATA,
+    _ACTIONABILITY_WRAPPED_RBAC_RESOLUTION_USERS,
+)
 
-| Role | Resource | Permissions |
-|------|----------|-------------|
-| QE administrator | vector-store resources | create, get, delete |
-"""
+ACTIONABILITY_WRAPPED_GENERIC_RBAC_RESOLUTION_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    _ACTIONABILITY_CONCRETE_DATA,
+    _ACTIONABILITY_WRAPPED_RBAC_RESOLUTION_USERS.replace(
+        "Platform team per strategy open question (Owner: Platform team)",
+        "Owner: test team",
+    ),
+)
 
-ACTIONABILITY_JUSTIFIED_TBD_PLAN = f"""{TEMPLATE_HEADINGS["3.1"]}
+# This is a concise synthetic regression for wrapped Markdown labels and values. It is not a copy
+# of the external RHAISTRAT-1258 artifact; real-data verification remains an explicit manual step.
+_ACTIONABILITY_ARTIFACT_LIKE_INFRASTRUCTURE = """- OpenShift cluster — version: `TBD — Resolution: confirm minimum
+  supported OpenShift version with Platform team before test environment
+  provisioning`
+- RHOAI 3.6 EA2 — exact build: `TBD — Resolution: obtain pinned build
+  number from release engineering before test execution begins`
+- KServe with storage handler supporting `hf://` protocol"""
 
-OpenShift version: TBD — Resolution: retrieve the supported-platform matrix from platform engineering before setup.
-RHOAI version: 2.25
+_ACTIONABILITY_ARTIFACT_LIKE_DATA = """- Valid Hugging Face API tokens with `read` scope
+  (format: `hf_*` string; must be verified against the HF Hub API)
+- Private Hugging Face model identifiers for discovery
+  (e.g., `hf://org/private-model-name`)"""
 
-{ACTIONABILITY_CONCRETE_DATA_AND_RBAC}
-"""
+_ACTIONABILITY_ARTIFACT_LIKE_RBAC = "- QE test users can get and create vector-store resources in serving namespaces."
+
+ACTIONABILITY_ARTIFACT_LIKE_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_ARTIFACT_LIKE_INFRASTRUCTURE,
+    _ACTIONABILITY_ARTIFACT_LIKE_DATA,
+    _ACTIONABILITY_ARTIFACT_LIKE_RBAC,
+)
+
+# Supply explicit RBAC evidence so the version/test-data parser regression is isolated from the
+# separate plural-user prose matcher.
+ACTIONABILITY_ARTIFACT_LIKE_VERSION_DATA_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_ARTIFACT_LIKE_INFRASTRUCTURE,
+    _ACTIONABILITY_ARTIFACT_LIKE_DATA,
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
+
+_ACTIONABILITY_ARTIFACT_LIKE_OPENSHIFT_RESOLVED_VALUE = (
+    "TBD — Resolution: confirm minimum\n"
+    "  supported OpenShift version with Platform team before test environment\n"
+    "  provisioning"
+)
+_ACTIONABILITY_ARTIFACT_LIKE_RHOAI_RESOLVED_VALUE = (
+    "TBD — Resolution: obtain pinned build\n  number from release engineering before test execution begins"
+)
+
+ACTIONABILITY_ARTIFACT_LIKE_OPENSHIFT_BARE_TBD_PLAN = ACTIONABILITY_ARTIFACT_LIKE_VERSION_DATA_PLAN.replace(
+    _ACTIONABILITY_ARTIFACT_LIKE_OPENSHIFT_RESOLVED_VALUE,
+    "TBD",
+)
+
+ACTIONABILITY_ARTIFACT_LIKE_RHOAI_BARE_TBD_PLAN = ACTIONABILITY_ARTIFACT_LIKE_VERSION_DATA_PLAN.replace(
+    _ACTIONABILITY_ARTIFACT_LIKE_RHOAI_RESOLVED_VALUE,
+    "TBD",
+)
+
+ACTIONABILITY_ARTIFACT_LIKE_RHOAI_EXACT_BUILD_RESOLVED_TBD_PLAN = ACTIONABILITY_ARTIFACT_LIKE_VERSION_DATA_PLAN.replace(
+    _ACTIONABILITY_ARTIFACT_LIKE_OPENSHIFT_RESOLVED_VALUE,
+    "4.18",
+)
+
+ACTIONABILITY_CONCRETE_VERSION_LABELS_PLAN = _build_actionability_plan(
+    """- **OpenShift cluster — version:**
+  `4.18`
+- **RHOAI 3.6 EA2 — exact build:**
+  `3.6.0-ea2`""",
+    _ACTIONABILITY_CONCRETE_DATA,
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
+
+ACTIONABILITY_ADVISORY_GAPS_PLAN = _build_actionability_plan(
+    """- OpenShift cluster — version: `latest`
+- RHOAI 3.6 EA2 — exact build: `current`""",
+    "- Test data requirements will be confirmed during test setup.",
+    "- qe-test-user can create, get, and delete vector-store resources.",
+)
+
+ACTIONABILITY_MISSING_VERSION_DATA_PLAN = _build_actionability_plan(
+    "- Environment: shared OpenShift cluster with RHOAI installed; the test namespace is provisioned before execution.",
+    "- Test data will be supplied by the test environment.",
+    "- qe-test-user can create, get, and delete vector-store resources.",
+)
+
+ACTIONABILITY_NON_SUBSTANTIVE_INFRASTRUCTURE_PLAN = _build_actionability_plan(
+    "Environment details unavailable",
+    _ACTIONABILITY_CONCRETE_DATA,
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
+
+ACTIONABILITY_ADVISORY_RESULT = {
+    "valid": True,
+    "bare_tbd": [],
+    "missing_details": [],
+    "advisory_gaps": ["OpenShift version", "RHOAI version", "test data formats and examples"],
+}
+
+ACTIONABILITY_ADVISORY_AND_BLOCKING_RESULT = {
+    "valid": False,
+    "bare_tbd": [],
+    "missing_details": ["RBAC roles and permissions"],
+    "advisory_gaps": ["OpenShift version", "RHOAI version", "test data formats and examples"],
+}
+
+ACTIONABILITY_GENERIC_TBD_CONFIGURATION_PLAN = _build_actionability_plan(
+    """- OpenShift version: 4.18
+- GPU configuration: TBD
+- RHOAI version: 2.25""",
+    _ACTIONABILITY_CONCRETE_DATA,
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
+
+ACTIONABILITY_RBAC_TBD_PROSE_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    _ACTIONABILITY_CONCRETE_DATA,
+    "The catalog-admin role is TBD. The qe-test-user can create, get, and delete vector-store resources.",
+)
+
+ACTIONABILITY_RBAC_UNRESOLVED_TBD_PROSE_PLAN = ACTIONABILITY_RBAC_TBD_PROSE_PLAN.replace(
+    "role is TBD.", "role is TBD — unknown."
+)
+
+ACTIONABILITY_RESOLVED_TBD_DATA_AND_RBAC_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    """Registration payload format: JSON object; Example: TBD — Resolution: obtain a concrete registration payload from
+API specification before test setup.""",
+    """The catalog-admin role is TBD — Resolution: confirm the required RBAC role with Platform team before environment
+setup. The qe-test-user can create, get, and delete vector-store resources.""",
+)
+
+ACTIONABILITY_RESOLVED_TBD_VISIBILITY_PLAN = _build_actionability_plan(
+    """OpenShift version: TBD — Resolution: retrieve the supported-platform matrix from Platform team before setup.
+RHOAI version: TBD — Resolution: obtain the pinned RHOAI build from Release Engineering before test setup.""",
+    """Registration payload format: JSON object; Example: TBD — Resolution: obtain a concrete registration payload from
+API specification before test setup.""",
+    """The catalog-admin role is TBD — Resolution: confirm the required RBAC role with Platform team before environment
+setup. The qe-test-user can create, get, and delete vector-store resources.""",
+)
+
+ACTIONABILITY_BARE_TBD_VISIBILITY_PLAN = ACTIONABILITY_RESOLVED_TBD_VISIBILITY_PLAN.replace(
+    "OpenShift version: TBD — Resolution: retrieve the supported-platform matrix from Platform team before setup.",
+    "OpenShift version: TBD",
+)
+
+ACTIONABILITY_UNRESOLVED_TBD_VISIBILITY_PLAN = ACTIONABILITY_RESOLVED_TBD_VISIBILITY_PLAN.replace(
+    "RHOAI version: TBD — Resolution: obtain the pinned RHOAI build from Release Engineering before test setup.",
+    "RHOAI version: TBD — unknown",
+)
+
+ACTIONABILITY_RESOLVED_TBD_VISIBILITY_LABELS = (
+    "OpenShift version",
+    "RHOAI version",
+    "test data formats and examples",
+    "RBAC roles and permissions",
+)
+
+ACTIONABILITY_EG_CONCRETE_VALUE_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    "Token format: string identifier; e.g., model-123",
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
+
+ACTIONABILITY_FOR_EXAMPLE_CONCRETE_VALUE_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    'Payload format: JSON object; for example {"name": "orders"}',
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
+
+ACTIONABILITY_ARBITRARY_BACKTICK_TOKEN_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    "A token is stored in `opaque-token-value` for transport during the test.",
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
+
+_ACTIONABILITY_GENERIC_EXAMPLE_PHRASES = (
+    "Example: a valid token",
+    "for example a model identifier",
+    "Example: an API payload",
+    "for example a JSON object",
+    "Example: a YAML manifest",
+)
+ACTIONABILITY_GENERIC_EXAMPLE_PLANS = tuple(
+    _build_actionability_plan(
+        _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+        f"Token format: string; {example_phrase}",
+        _ACTIONABILITY_CONCRETE_RBAC,
+    )
+    for example_phrase in _ACTIONABILITY_GENERIC_EXAMPLE_PHRASES
+)
+
+ACTIONABILITY_YAML_EXAMPLE_VALUE_PLAN = _build_actionability_plan(
+    _ACTIONABILITY_CONCRETE_INFRASTRUCTURE,
+    "Manifest format: YAML; Example: kind: InferenceService",
+    _ACTIONABILITY_CONCRETE_RBAC,
+)
+
+LOGICAL_MARKDOWN_ENTRY_CASES = (
+    (
+        "- Environment source: TBD — Resolution: retrieve the supported-platform matrix\n"
+        "  from Platform team before environment setup\n"
+        "- GPU configuration: TBD",
+        [
+            "- Environment source: TBD — Resolution: retrieve the supported-platform matrix from Platform team "
+            "before environment setup",
+            "- GPU configuration: TBD",
+        ],
+    ),
+    (
+        "A paragraph starts here\n"
+        "and continues on the next line\n\n"
+        "1. A numbered entry starts here\n"
+        "   and also continues",
+        [
+            "A paragraph starts here and continues on the next line",
+            "1. A numbered entry starts here and also continues",
+        ],
+    ),
+)
+
+OCCURRENCE_LEVEL_TBD_CASES = (
+    (
+        "- Environment source: TBD — Resolution: retrieve the supported-platform matrix\n"
+        "  from Platform team before environment setup\n"
+        "- GPU configuration: TBD",
+        ["GPU configuration"],
+    ),
+    (
+        "GPU configuration: TBD. Node selector: TBD — Resolution: confirm the node selector before environment setup.",
+        ["GPU configuration"],
+    ),
+    (
+        "GPU configuration: TBD. Node selector: TBD",
+        ["GPU configuration", "Node selector"],
+    ),
+)

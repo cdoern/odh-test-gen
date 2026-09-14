@@ -8,7 +8,7 @@
 > |-------|---------|
 > | `test-plan-auto-created` | AI generated the test plan |
 > | `test-plan-rubric-pass` | Automated rubric scored >= 8/10, no zeros, AND actionability == 2 |
-> | `test-plan-rubric-revise` | Automated rubric scored Revise verdict (qualifying total but a criterion below 2, most notably actionability=1) |
+> | `test-plan-rubric-revise` | Automated rubric scored Revise verdict (qualifying total but a criterion below 2, including a blocking Actionability gap) |
 > | `test-plan-rubric-fail` | Automated rubric scored < 7, or any criterion scored 0 |
 > | `test-plan-auto-revised` | AI applied at least one auto-revision cycle |
 > | `test-plan-human-reviewed` | Human has reviewed and approved |
@@ -59,7 +59,8 @@ pipeline -- has already passed through automated generation and scoring.
 The path forward depends on the rubric verdict:
 
 - **Rubric-pass** (>= 8/10, no zeros, actionability == 2) -- The plan meets baseline
-  quality. Review for domain accuracy, then approve or request changes.
+  quality. It may still contain non-blocking actionability advisories listed in
+  `TestPlanGaps.md`. Review for domain accuracy, then approve or request changes.
 - **Rubric-revise** (total >= 7, no zeros, but not Ready) -- The plan qualifies but has
   minor improvements needed. Review and decide whether to iterate or approve as-is.
 - **Rubric-fail** (< 7 or any zero) -- The automated review flagged
@@ -88,7 +89,8 @@ each scored 0-2.
 | **Revise** | total >= 7, no zeros (but not Ready) | Minor improvements needed |
 | **Rework** | total < 7 or any zero | Significant issues -- needs source docs |
 
-> **Note**: The frontmatter `pass` boolean is a lower floor (total >= 7, no
+> **Note**: A Ready plan may carry advisory actionability gaps. The frontmatter `pass` boolean is
+> a lower floor (total >= 7, no
 > zeros) than the `test-plan-rubric-pass` Jira label (>= 8, no zeros, AND
 > actionability == 2). A Revise-verdict plan can have `pass: true` while
 > still being labeled `test-plan-rubric-revise` -- the two are intentionally
@@ -204,16 +206,32 @@ What to check:
 #### Actionability (Section 3, Section 9)
 
 **Smell test**: Hand Sections 3 and 9 to a platform engineer who knows
-nothing about the feature. Could they provision the test environment?
-If they'd come back with questions, it's not actionable.
+nothing about the feature. Could they begin provisioning the test environment?
+Questions about missing or vague versions or incomplete test-data examples
+are advisory; inability to proceed because of missing Section 3.1 evidence,
+bare TBDs, or unusable RBAC is blocking.
 
 What to check:
-- Are OpenShift and RHOAI versions specified? For `actionability == 2`, an unknown is acceptable
-  only as `TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}`.
-  A recorded gap without that explicit resolution path cannot support a 2/2 score.
-- Does test data include format and examples, not just "sample data"?
+- Are OpenShift and RHOAI versions specified? Missing or vague values are advisory and should be
+  visible in `TestPlanGaps.md`; they do not by themselves lower `actionability == 2`. For a
+  genuinely unknown required value, use `TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}`.
+  A bare or unresolved TBD is blocking and cannot support a 2/2 score.
+- Does test data include concrete format and examples, not just "sample data"? Missing or
+  incomplete format/examples are advisory, but unresolved required values marked with a bare TBD
+  remain blocking.
 - Are test users defined with specific roles and permissions?
 - Are infrastructure requirements concrete enough to act on?
+
+Use the same unresolved-TBD rule for each occurrence in Sections 3.1, 3.2, and 3.3. A grounded
+`TBD — Resolution: ...` path is non-blocking, including `derive` from a named overlay requirement;
+a bare or unresolved TBD remains blocking. Count a data example only when it is in an explicit
+`Example`/`Sample`/`Fixture` label or table column, or an `e.g.,`/`for example` clause. Arbitrary
+inline backticks and broad words such as `token` are not sufficient evidence.
+
+The deterministic actionability payload separates blocking `bare_tbd` and `missing_details` from
+non-blocking `advisory_gaps`. A plan can be Ready with the latter. Missing Section 3.1
+environment/configuration and missing or unusable RBAC role, permission, or resource evidence are
+blocking; advisory gaps alone do not require revision or additional source documents.
 
 #### Consistency (cross-section)
 
@@ -333,8 +351,8 @@ Focus on:
 - **NFRs** -- Are disconnected, upgrade, performance, RBAC, and
   security considerations properly addressed or explicitly marked
   N/A with justification?
-- **Gaps** -- Are the gaps in `TestPlanGaps.md` blockers, or can
-  testing proceed?
+- **Gaps** -- Which gaps in `TestPlanGaps.md` are blocking, and which are
+  advisory follow-up items that do not prevent testing from proceeding?
 
 ### Domain Expert / Architect
 
@@ -353,10 +371,11 @@ Focus on:
 | Generic priority definitions | Section 2.3 | PR comment: "P0 should reference [specific scenario]" |
 | Fabricated interface paths | Section 4, TestPlanReview.md grounding table | PR comment with correct paths, or provide ADR |
 | Missing test scenarios | Section 4, test_cases/ | PR comment describing the missing scenario |
-| Vague environment setup | Sections 3, 9 | PR comment with specific versions and config |
+| Vague environment setup | Sections 3, 9 | Treat missing/vague OpenShift or RHOAI versions as advisory; comment on missing Section 3.1 configuration or other blocking setup gaps |
+| Missing test-data format/examples | Section 3.2, TestPlanGaps.md | Treat incomplete format/examples as advisory unless a required value is a bare/unresolved TBD |
 | Scope creep (testing out-of-scope items) | Section 1.2 vs Section 4 | PR comment identifying out-of-scope entries |
 | NFR marked N/A incorrectly | Section 7 | PR comment explaining why the category applies |
-| TBDs that you can resolve | TestPlanGaps.md | PR comment with the answer, or provide the source doc |
+| TBDs that you can resolve | TestPlanGaps.md | Provide the answer or source doc for a blocking bare/unresolved TBD; do not require source documents solely for advisory version/data gaps |
 | Inconsistent cross-references | Section 9.2 vs Section 4 | PR comment (often auto-fixed by the pipeline) |
 | Missing E2E/UI coverage for interfaces | Section 6.2 | PR comment requesting an E2E or UI test case reference |
 
@@ -368,9 +387,10 @@ Focus on:
    only you know if the technical details are real.
 3. **Use PR comments for feedback.** `/test-plan-resolve-feedback`
    turns your comments into tracked, versioned changes.
-4. **Resolve TBDs with source documents.** If you can provide an ADR,
-   API spec, or design doc, the author can re-run analyzers to fill
-   gaps automatically.
+4. **Resolve blocking TBDs with source documents.** If you can provide an
+   ADR, API spec, or design doc, the author can re-run analyzers to fill
+   blocking gaps automatically. Advisory version/data gaps remain visible
+   and do not by themselves require another source document.
 5. **Don't fix what the pipeline can fix.** Consistency issues
    (mismatched tables, missing cross-references) are often handled by
    auto-revision. Focus your review on domain accuracy.

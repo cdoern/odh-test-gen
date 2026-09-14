@@ -131,7 +131,11 @@ For each TC in `tcs_for_this_file` (sequential):
 - Read available markers from conventions_file (odh-test-context provides marker list)
 - Map TC priority → repo markers (P0 → tier1 or p0)
 - Map TC category → repo markers (API → api)
-- **Only use markers defined in conventions**
+- **Only use markers registered in the repo** (conventions + existing test examples). Never emit
+  an unregistered marker — it breaks collection under `--strict-markers`.
+- **Negative tests → the repo's negative tier** (commonly `tier3`), not `tier1`.
+- **Tests that need live external API access → `skip_on_disconnected`** (or the repo's equivalent).
+- Do NOT add team markers unless the repo's existing tests actually use them.
 
 **Function Signature:**
 - Use provided function_name exactly
@@ -146,6 +150,45 @@ For each TC in `tcs_for_this_file` (sequential):
 - **Arrange**: Setup from preconditions
 - **Act**: Execute test steps
 - **Assert**: Validate expected results with messages
+
+**Correctness guardrails (avoid false-green tests):**
+
+A test that passes while the feature is absent or broken is worse than no test. Apply these:
+
+- **Activation gate:** If the feature-under-test has an enablement/activation gate, derive the gate
+  from the actual distribution/config source (e.g. the distribution `run.yaml` env var like
+  `ENABLE_GEMINI`), **not** from the credential name (`GEMINI_API_KEY`). Injecting only the
+  credential can leave the feature inactive so every test passes while exercising nothing. If the
+  gate cannot be verified, emit a prominent `TODO` **and** a fixture assertion that fails loudly when
+  the feature is not actually active.
+- **Feature-specific signal (false green):** Assert a signal that would *differ* if the feature were
+  broken/absent — presence of the provider/model under test, provider-identity checks, a
+  distinguishing response field. Never assert only generic success (e.g. "all requests returned
+  200"), which passes for any working backend.
+- **skip vs. fail:** Classify each precondition. Environment/harness prerequisite not guaranteed in
+  the target env (secondary API keys, packet-capture tooling, MCP harness) → `pytest.skip`.
+  Something the active feature *must* provide (a model the active provider should register, the
+  provider itself) → `pytest.fail`. Do NOT default every missing precondition to `skip` — that hides
+  the exact defects the test exists to catch.
+- **Tight assertions:** Use exact type checks over broad ABCs (validate embedding floats with
+  `float`, not `numbers.Real`, which also accepts `int`/`bool`); add finiteness checks
+  (reject `NaN`/`inf`); assert a collection is non-empty before indexing (`response.choices[0]`);
+  iterate **all** candidates (every container/file/match), not just the first.
+- **No probabilistic assertions:** Do not assert on stochastic model output (e.g. temperature
+  variability ordering) or anything you cannot verify with the available harness (e.g. on-wire
+  parameter forwarding without request capture). Generate the deterministic subset that *can* be
+  checked and document the unverifiable gap instead of a flaky assertion.
+- **Bounded loops:** Every stream-consume / poll loop needs a max-iteration or deadline bound that
+  fails loudly on overrun — never iterate until the server closes an unbounded stream. A bound
+  checked inside the loop does not stop a blocking read, so also set a client-level read timeout (or
+  cancellation) that enforces the deadline on a stalled `next()`/socket read; on timeout, close the
+  stream and fail the test.
+- **Helper safety:** Apply the same bar to generated helper/util code as to tests. Never invoke a
+  shell on values that may be influenced by test input — use argv-form subprocess calls with
+  `shell=False` and allowlist the executable and argument choices; never use `shell=True`,
+  `os.system`, or `sh -c` (CWE-78). Use exact comparison over substring (`"SET" in output` also
+  matches `"UNSET"`); reject unknown enum values explicitly instead of silently falling through to a
+  default.
 
 Collect each generated function in `functions` array.
 

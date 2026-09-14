@@ -88,6 +88,13 @@ If installation fails, inform the user and do NOT proceed. Once installed, all P
 
    A nonzero exit means gate-input construction itself failed (unreadable strategy file, a parsing bug) — that's an execution failure, not data about the test plan, so stop rather than silently falling back to degraded mode. The interface coverage result distinguishes missing/blank Section 6.2 rows in `missing_in_6_2` from declared interfaces with a populated row that contains neither a `TC-E2E-*` nor a `TC-UI-*` reference in `missing_e2e_or_ui_in_6_2`; each populated Section 6.2 row must contain at least one `TC-E2E-*` or `TC-UI-*` reference. Use both fields in the consistency assessment. Empty pre-create-cases Section 6.2 remains valid and is skipped by the validator.
 
+   For Actionability, only `bare_tbd` and `missing_details` are blocking; `advisory_gaps` are
+   visible follow-up items. Section 3.1 must contain substantive environment/configuration
+   evidence, not only vague or unavailable text. The same occurrence-level TBD rule applies to
+   Sections 3.1–3.3, RBAC must name a role, permissions, and a concrete resource, and
+   `all`/`any`/`every` collections or wildcard resources are not concrete. Test-data examples must
+   use explicit example labels/table columns or `e.g.,`/`for example` clauses.
+
 5. Resolve `additional_docs` from TestPlan.md frontmatter:
 
    ```bash
@@ -160,7 +167,11 @@ Launch a **forked** score agent with substitutions:
 
 ### Step 2.5: Enforce Score Caps
 
-The score agent is instructed to cap Scope Fidelity/Specificity/Actionability per the precomputed results above — but LLM compliance isn't guaranteed, and this skill writes no `TestPlanReview.md` for a gate to correct after the fact (unlike `test-plan.review`, which re-applies the rule via `enforce_citation_gate.py` once the file exists). Re-apply it directly against the agent's self-reported scores (each 0-2, from the Score Table in Step 2), before presenting anything.
+The score agent is instructed to apply the deterministic Scope Fidelity/Specificity/Actionability
+rules above — but LLM compliance isn't guaranteed, and this skill writes no `TestPlanReview.md` for
+a gate to correct after the fact (unlike `test-plan.review`, which re-applies the rule via
+`enforce_citation_gate.py` once the file exists). Re-apply them directly against the agent's
+self-reported scores (each 0-2, from the Score Table in Step 2), before presenting anything.
 
 Write the five rubric scores from the Score Table as a JSON object (use `scope_fidelity` with an underscore, matching the rubric key):
 
@@ -190,7 +201,7 @@ if [ "$cap_status" = "error" ]; then
 fi
 ```
 
-The Python helper validates that `scores_json` contains exactly five integer scores (0-2 each) before processing — malformed or out-of-range values produce a structured error, not a shell failure. If `cap_status` is `overridden`, Step 3 below presents `cap_result`'s `scores`/`score`/`verdict`/`pass` — not the agent's own numbers. The presentation must explicitly report every corrected criterion, including an **Actionability cap to 1/2** when `cap_result.actionability_capped` is `true`. For that cap, replace the score agent's original Evidence and Notes with a deterministic rationale built from `actionability_result.bare_tbd` and `actionability_result.missing_details`; do not show any scorer-supplied rationale beside the corrected score.
+The Python helper validates that `scores_json` contains exactly five integer scores (0-2 each) before processing — malformed or out-of-range values produce a structured error, not a shell failure. If `cap_status` is `overridden`, Step 3 below presents `cap_result`'s `scores`/`score`/`verdict`/`pass` — not the agent's own numbers. The presentation must explicitly report every corrected criterion, including an **Actionability cap to 1/2** when `cap_result.actionability_capped` is `true`. The cap is based only on `actionability_result.bare_tbd` and `actionability_result.missing_details`; valid evidence preserves the scorer's 0/1, and `advisory_gaps` never cap or lower a score. For an Actionability cap, replace the score agent's original Evidence and Notes with a deterministic rationale built from the blocking fields.
 
 ### Step 3: Present Results
 
@@ -206,7 +217,7 @@ Parse the score agent's output and present the results to the user, substituting
 | Specificity | {n}/2 | {brief rationale, or "Automatically corrected — boilerplate check failed" if Step 2.5 overrode it} |
 | Grounding | {n}/2 | {brief rationale} |
 | Scope Fidelity | {n}/2 | {brief rationale, or "Automatically corrected — citation/coverage/scope checks failed" if Step 2.5 overrode it} |
-| Actionability | {n}/2 | {brief rationale when not capped; otherwise "Automatically corrected to 1/2 — deterministic actionability evidence failed: {bare_tbd and/or missing_details}"} |
+| Actionability | {n}/2 | {brief rationale when not corrected; otherwise "Automatically corrected to 1/2 — deterministic blocking actionability evidence failed: {bare_tbd and/or missing_details}"; advisory gaps may remain visible without lowering this score} |
 | Consistency | {n}/2 | {brief rationale} |
 
 **Total: {sum}/10**

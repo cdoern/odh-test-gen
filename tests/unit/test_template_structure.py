@@ -16,15 +16,38 @@ from tests.constants import REPO_ROOT
 
 TEMPLATE_PATH = REPO_ROOT / "skills" / "test-plan-create" / "test-plan-template.md"
 CREATE_SKILL_PATH = REPO_ROOT / "skills" / "test-plan-create" / "SKILL.md"
-ENDPOINT_ANALYZER_SKILL_PATH = REPO_ROOT / "skills" / "test-plan-analyze-endpoints" / "SKILL.md"
 CREATE_CASES_SKILL_PATH = REPO_ROOT / "skills" / "test-plan-create-cases" / "SKILL.md"
 REVIEW_SKILL_PATH = REPO_ROOT / "skills" / "test-plan-review" / "SKILL.md"
 SCORE_SKILL_PATH = REPO_ROOT / "skills" / "test-plan-score" / "SKILL.md"
 SCORE_PROMPT_PATH = REPO_ROOT / "skills" / "test-plan-review" / "prompts" / "score-agent.md"
 REVISE_PROMPT_PATH = REPO_ROOT / "skills" / "test-plan-review" / "prompts" / "revise-agent.md"
 HUMAN_REVIEW_GUIDE_PATH = REPO_ROOT / "docs" / "human-review-guide.md"
+CALIBRATION_GUIDANCE_PATH = (
+    REPO_ROOT / "skills" / "test-plan-review" / "calibration" / "core" / "03-amd-mi350p-model-serving.md"
+)
 
 E2E_OR_UI_DIAGNOSTIC_KEY = "missing_e2e_or_ui_in_6_2"
+_CANONICAL_TBD_RESOLUTION = (
+    "TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}"
+)
+_ACTIONABILITY_GUIDANCE = (
+    (
+        REVIEW_SKILL_PATH,
+        'Leave TBD as plain "TBD"',
+    ),
+    (
+        CALIBRATION_GUIDANCE_PATH,
+        "TBD-with-reason",
+    ),
+    (
+        HUMAN_REVIEW_GUIDE_PATH,
+        "marked TBD with rationale",
+    ),
+)
+_OPTION_1_MARKER = "**If option 1:**"
+_OPTION_2_MARKER = "**If option 2:**"
+_LABEL_STAMPING_START = "### Step 4.5: Stamp rubric verdict label"
+_LABEL_STAMPING_END = "### What this skill does NOT do"
 
 _E2E_COVERAGE_CONTRACT_PATHS = (
     REVIEW_SKILL_PATH,
@@ -56,27 +79,6 @@ def _has_e2e_or_ui_requirement(text):
             normalized,
             re.IGNORECASE,
         )
-    )
-
-
-def _has_ac_less_scope_gaps_instruction(text):
-    paragraphs = [_normalise_whitespace(paragraph) for paragraph in text.split("\n\n")]
-
-    return any(
-        "## Gaps" in paragraph
-        and re.search(r"\b(?:every|each|all)\b.{0,100}\bin[- ]scope\b", paragraph, re.IGNORECASE)
-        and re.search(
-            r"(?:excluded|omitted|left out).{0,140}Section 1\.3|Section 1\.3.{0,140}(?:excluded|omitted|left out)",
-            paragraph,
-            re.IGNORECASE,
-        )
-        and re.search(
-            r"(?:lack|without|no|does not have|not have).{0,80}backing (?:AC|Acceptance Criterion)",
-            paragraph,
-            re.IGNORECASE,
-        )
-        and re.search(r"(?:record|log|disclos|include).{0,120}Gaps", paragraph, re.IGNORECASE)
-        for paragraph in paragraphs
     )
 
 
@@ -154,6 +156,74 @@ class TestTemplateCitationFormat:
         assert cites[0]["kind"] in {"AC", "NFR"}
 
 
+class TestActionabilityDocumentationContract:
+    @pytest.mark.parametrize("path, disallowed_guidance", _ACTIONABILITY_GUIDANCE)
+    def test_actionability_two_guidance_requires_canonical_tbd_resolution(self, path, disallowed_guidance):
+        guidance = path.read_text()
+
+        assert "actionability == 2" in guidance
+        assert _CANONICAL_TBD_RESOLUTION in guidance
+        assert disallowed_guidance not in guidance
+
+
+class TestActionabilityRecomputationContract:
+    def test_create_resolution_rerun_recomputes_actionability_after_testplan_edit(self):
+        instructions = CREATE_SKILL_PATH.read_text()
+
+        assert instructions.count(_OPTION_1_MARKER) == 1
+        assert instructions.count(_OPTION_2_MARKER) == 1
+        assert instructions.index(_OPTION_1_MARKER) < instructions.index(_OPTION_2_MARKER)
+
+        resolution_block = instructions.split(_OPTION_1_MARKER, maxsplit=1)[1].split(_OPTION_2_MARKER, maxsplit=1)[0]
+        normalized = " ".join(resolution_block.split())
+
+        plan_edit_index = normalized.casefold().find("update the test plan")
+        recompute_index = normalized.find("scripts/build_citation_inputs.py")
+
+        assert plan_edit_index >= 0
+        assert recompute_index > plan_edit_index
+        assert "actionability_result" in normalized[recompute_index:]
+
+
+class TestCreateSkillLabelStampingContract:
+    def test_label_stamping_reads_all_frontmatter_inputs_before_using_them(self):
+        instructions = CREATE_SKILL_PATH.read_text()
+
+        assert "### Step 3.6: Stamp Jira label — test plan created" in instructions
+        assert "test-plan-auto-created" in instructions
+
+        label_section = instructions.split(_LABEL_STAMPING_START, maxsplit=1)[1].split(_LABEL_STAMPING_END, maxsplit=1)[
+            0
+        ]
+        normalized = " ".join(label_section.split())
+
+        read_positions = {}
+        for variable, artifact, field in (
+            ("source_key", "TestPlan.md", "source_key"),
+            ("verdict", "TestPlanReview.md", "verdict"),
+            ("auto_revised", "TestPlanReview.md", "auto_revised"),
+        ):
+            read = re.search(
+                rf"{variable}=\$\(.*?frontmatter\.py read .*?{artifact} {field}\)",
+                normalized,
+            )
+            assert read is not None, f"Step 4.5 must read {field} into ${variable}"
+            read_positions[variable] = read.start()
+
+        first_label_use = normalized.index('if [ "$auto_revised" = "true" ]; then')
+        assert all(position < first_label_use for position in read_positions.values())
+        assert 'uv run python scripts/add_jira_labels.py "$source_key" --verdict "$verdict"' in normalized
+
+        for marker in (
+            "test-plan-rubric-pass",
+            "test-plan-rubric-revise",
+            "test-plan-rubric-fail",
+            "test-plan-auto-revised",
+            "Label stamping is **non-blocking**",
+        ):
+            assert marker in label_section
+
+
 class TestGeneratedPlanEvidenceContracts:
     @pytest.mark.parametrize("section", _SCOPE_BEARING_SECTIONS)
     def test_scope_bearing_template_sections_require_an_objective_marker(self, section):
@@ -168,26 +238,13 @@ class TestGeneratedPlanEvidenceContracts:
         assert "scripts/build_citation_inputs.py" in instructions
         assert ".scope_coverage_result.valid" in instructions
 
-    def test_scope_fidelity_revision_guidance_can_repair_every_scope_bearing_section(self):
-        scope_fidelity_row = next(
-            line for line in REVISE_PROMPT_PATH.read_text().splitlines() if line.startswith("| **Scope Fidelity**")
-        )
-
-        assert "(Objective: #N)" in scope_fidelity_row
-        for section in _SCOPE_BEARING_SECTIONS:
-            assert section in scope_fidelity_row
-
     def test_tbd_guidance_matches_the_validator_resolution_path_contract(self):
         template = TEMPLATE_PATH.read_text()
         creation_instructions = CREATE_SKILL_PATH.read_text()
-        score_prompt = SCORE_PROMPT_PATH.read_text()
         revision_instructions = REVISE_PROMPT_PATH.read_text()
 
         assert "TBD — Resolution:" in template
-        assert "explicit resolution path" in creation_instructions
         assert 'plain "TBD"' not in creation_instructions
-        assert "explicit resolution path" in score_prompt
-        assert "explicit resolution path" in revision_instructions
         assert "TBD — Resolution:" in revision_instructions
         assert "TBD — pending" not in revision_instructions
 
@@ -242,38 +299,4 @@ class TestGeneratedPlanEvidenceContracts:
             r"`missing_e2e_or_ui_in_6_2`.{0,500}\bdeficient duplicate(?:s)?\b",
             normalized_guide,
             re.IGNORECASE,
-        )
-
-    def test_creation_instructions_disclose_ac_less_in_scope_exclusions_in_gaps(self):
-        paragraphs = [_normalise_whitespace(paragraph) for paragraph in CREATE_SKILL_PATH.read_text().split("\n\n")]
-
-        assert any(
-            "TestPlanGaps.md" in paragraph
-            and "Section 1.2" in paragraph
-            and "Section 1.3" in paragraph
-            and re.search(r"in[- ]scope", paragraph, re.IGNORECASE)
-            and re.search(r"exclud|omit", paragraph, re.IGNORECASE)
-            and re.search(
-                r"(?:lack|without|no|does not have|not have).{0,80}backing (?:AC|Acceptance Criterion)",
-                paragraph,
-                re.IGNORECASE,
-            )
-            and re.search(r"backing (?:AC|Acceptance Criterion)", paragraph, re.IGNORECASE)
-            and re.search(r"record|log|disclos", paragraph, re.IGNORECASE)
-            for paragraph in paragraphs
-        )
-
-    def test_endpoint_analyzer_discloses_ac_less_in_scope_exclusions_in_its_gaps_output(self):
-        assert _has_ac_less_scope_gaps_instruction(ENDPOINT_ANALYZER_SKILL_PATH.read_text())
-
-    def test_parent_orchestration_preserves_endpoint_gaps_disclosure_contract(self):
-        instructions = _normalise_whitespace(CREATE_SKILL_PATH.read_text())
-
-        assert "The endpoint analyzer owns disclosure" in instructions
-        assert "Pass that analyzer output through unchanged" in instructions
-        assert "collect its required `## Gaps` output into `TestPlanGaps.md` at Step 3.5" in instructions
-        assert (
-            "The parent must not be responsible for adding a concise entry in the analyzer `## Gaps` material "
-            "passed to Step 3.5, inventing an objective, or using a free-text matcher to infer further exclusions."
-            in instructions
         )

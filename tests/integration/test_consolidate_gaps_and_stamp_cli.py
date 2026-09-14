@@ -22,10 +22,13 @@ from tests.constants import REPO_ROOT
 from tests.consts.gaps_constants import (
     GAPS_ENDPOINTS_DUPLICATE,
     GAPS_INFRA_SINGLETON,
+    GAPS_INFRA_ACTIONABILITY_ADVISORY_AND_BLOCKING,
+    GAPS_INFRA_ACTIONABILITY_ADVISORY_ONLY,
     GAPS_NEXT_PROCEED,
     GAPS_NEXT_PROMPT_USER,
     GAPS_RISKS_DUPLICATE,
 )
+from tests.consts.validation_constants import ACTIONABILITY_ADVISORY_AND_BLOCKING_RESULT, ACTIONABILITY_ADVISORY_RESULT
 
 LAST_UPDATED = "1999-12-31"
 
@@ -56,6 +59,132 @@ def feature_dir(tmp_path):
 
 
 class TestConsolidateGapsAndStampCLI:
+    def test_advisory_actionability_gaps_are_written_without_source_document_prompt(self, feature_dir):
+        staging = feature_dir / ".analysis-infra.md"
+        staging.write_text("## Gaps\n\nNo gaps identified.\n")
+        out_file = feature_dir / "TestPlanGaps.md"
+
+        result = _run_cli(
+            "--feature-name",
+            "Test Feature",
+            "--source-key",
+            "RHAISTRAT-400",
+            "--source",
+            f"infra={staging}",
+            "--actionability-result",
+            json.dumps(ACTIONABILITY_ADVISORY_RESULT),
+            "--out",
+            str(out_file),
+        )
+
+        assert result.returncode == 0, result.stderr
+        stdout_data = json.loads(result.stdout)
+        assert stdout_data["gap_count"] == 0
+        assert stdout_data["next"] == GAPS_NEXT_PROCEED
+
+        _, body = read_frontmatter(out_file)
+        for gap in ACTIONABILITY_ADVISORY_RESULT["advisory_gaps"]:
+            assert gap in body
+
+    @pytest.mark.parametrize(
+        "source_text, actionability_result, expected_gap_count, expected_next, blocking_group",
+        (
+            pytest.param(
+                GAPS_INFRA_ACTIONABILITY_ADVISORY_ONLY,
+                ACTIONABILITY_ADVISORY_RESULT,
+                0,
+                GAPS_NEXT_PROCEED,
+                None,
+                id="advisory-analyzer-gaps-are-reclassified",
+            ),
+            pytest.param(
+                GAPS_INFRA_ACTIONABILITY_ADVISORY_AND_BLOCKING,
+                ACTIONABILITY_ADVISORY_AND_BLOCKING_RESULT,
+                1,
+                GAPS_NEXT_PROMPT_USER,
+                "feature refinement",
+                id="blocking-analyzer-gap-still-prompts",
+            ),
+        ),
+    )
+    def test_reclassifies_analyzer_advisory_gaps_before_counting_but_keeps_blocking_gaps(
+        self, feature_dir, source_text, actionability_result, expected_gap_count, expected_next, blocking_group
+    ):
+        staging = feature_dir / ".analysis-infra.md"
+        staging.write_text(source_text)
+        out_file = feature_dir / "TestPlanGaps.md"
+
+        result = _run_cli(
+            "--feature-name",
+            "Test Feature",
+            "--source-key",
+            "RHAISTRAT-400",
+            "--source",
+            f"infra={staging}",
+            "--actionability-result",
+            json.dumps(actionability_result),
+            "--out",
+            str(out_file),
+        )
+
+        assert result.returncode == 0, result.stderr
+        stdout_data = json.loads(result.stdout)
+        assert stdout_data["gap_count"] == expected_gap_count
+        assert stdout_data["next"] == expected_next
+
+        frontmatter, body = read_frontmatter(out_file)
+        assert frontmatter["gap_count"] == expected_gap_count
+        assert "## Advisory Actionability Gaps" in body
+        for advisory_gap in actionability_result["advisory_gaps"]:
+            assert advisory_gap in body
+        assert "- **ADR** — flagged by: infra" not in body
+        assert "- **API spec** — flagged by: infra" not in body
+        if blocking_group:
+            assert f"- **{blocking_group}** — flagged by: infra" in body
+            assert "Detailed RBAC role definitions and permission matrices" in body
+
+    @pytest.mark.parametrize(
+        "actionability_payload, expected_error",
+        (
+            pytest.param(
+                {"valid": True, "bare_tbd": [], "missing_details": []},
+                "advisory_gaps",
+                id="missing-advisory-gaps",
+            ),
+            pytest.param(
+                {"valid": True, "bare_tbd": [], "missing_details": [], "advisory_gaps": "not-a-list"},
+                "advisory_gaps",
+                id="advisory-gaps-not-a-list",
+            ),
+        ),
+    )
+    def test_malformed_actionability_payload_fails_before_gap_artifact_write(
+        self, feature_dir, actionability_payload, expected_error
+    ):
+        staging = feature_dir / ".analysis-infra.md"
+        staging.write_text("## Gaps\n\nNo gaps identified.\n")
+        out_file = feature_dir / "TestPlanGaps.md"
+
+        result = _run_cli(
+            "--feature-name",
+            "Test Feature",
+            "--source-key",
+            "RHAISTRAT-400",
+            "--source",
+            f"infra={staging}",
+            "--actionability-result",
+            json.dumps(actionability_payload),
+            "--out",
+            str(out_file),
+        )
+
+        assert result.returncode == 1
+        error_payload = json.loads(result.stdout)
+        assert error_payload["status"] == "failed"
+        assert expected_error in error_payload["error"]
+        assert not out_file.exists()
+        assert staging.exists()
+
     @pytest.mark.parametrize(
         "sources,expected_gap_count,expected_status,body_contains,body_excludes",
         [

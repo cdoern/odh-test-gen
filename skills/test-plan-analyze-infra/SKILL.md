@@ -52,7 +52,7 @@ What user types are needed:
 - Unprivileged users for permission testing
 - Anonymous access scenarios
 
-If the strategy doesn't mention specific versions or user types, do not guess. Use `TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}` only when that path is grounded in the source; otherwise record the gap without presenting it as actionable evidence. Test-data examples must be concrete, not bracketed placeholders. RBAC entries must identify both a role, a concrete resource, and permissions.
+If the strategy doesn't mention specific versions or user types, do not guess. Use `TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}` only when that path is grounded in the source; otherwise record the gap without presenting it as actionable evidence. Apply this unresolved-TBD rule independently to every entry in Sections 3.1, 3.2, and 3.3; `derive` is valid when a named overlay or other source grounds the derivation. Test-data examples must be concrete and appear in an explicit `Example`/`Sample`/`Fixture` label or table column, or an `e.g.,`/`for example` clause; arbitrary backticks and broad words such as `token` are insufficient. RBAC entries must identify both a role, a concrete resource, and permissions.
 
 ### 4. Test Tools (for Section 3.4)
 

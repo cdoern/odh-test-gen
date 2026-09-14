@@ -63,6 +63,15 @@ Parse the total score and per-criterion scores from the assessment:
 | **Revise** | Total >= 7 AND no criterion scored 0 (but not meeting Ready bar) |
 | **Rework** | Total < 7 OR any criterion scored 0 |
 
+An Actionability score of 2/2 is compatible with non-empty `advisory_gaps` in the deterministic
+actionability result. Only `bare_tbd` and `missing_details` are blocking evidence; advisory gaps
+must remain visible in the review feedback but do not lower a score or require revision by
+themselves. Apply the same unresolved-TBD classifier to every occurrence in Sections 3.1, 3.2,
+and 3.3: a grounded `TBD — Resolution: ...` path is non-blocking, including `derive` from a
+named overlay requirement, while a bare or unresolved TBD is blocking. Treat examples as evidence
+only when they appear in an explicit example label/table column or an `e.g.,`/`for example` clause;
+arbitrary inline backticks and broad words such as `token` are insufficient.
+
 ## Step 5: Set Frontmatter
 
 Read the test plan frontmatter to get the `feature` and `source_key` values:

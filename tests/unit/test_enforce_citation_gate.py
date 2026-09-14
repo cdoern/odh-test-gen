@@ -12,13 +12,20 @@ import pytest
 
 from scripts.enforce_citation_gate import (
     apply_score_caps,
+    cap_actionability,
     cap_scope_fidelity,
     cap_specificity,
     enforce_citation_gate,
     main,
 )
+from scripts.filter_for_revision import filter_for_revision
 from scripts.utils.frontmatter_utils import read_frontmatter, write_frontmatter_with_body
+from scripts.validate_quality_evidence import validate_actionability
 from tests.consts.validation_constants import (
+    ACTIONABILITY_ADVISORY_RESULT,
+    ACTIONABILITY_ADVISORY_GAPS_PLAN,
+    ACTIONABILITY_RBAC_WITHOUT_RESOURCE_PLAN,
+    ACTIONABILITY_TBD_UNKNOWN_PLAN,
     BOILERPLATE_FIVE_VIOLATIONS,
     BOILERPLATE_THREE_VIOLATIONS,
     INVALID_CITATIONS,
@@ -181,9 +188,20 @@ class TestCapScopeFidelity:
             ),
             pytest.param(
                 VALID_SCOPE_COVERAGE,
-                {"valid": False, "bare_tbd": "OpenShift version", "missing_details": []},
+                {
+                    "valid": False,
+                    "bare_tbd": "OpenShift version",
+                    "missing_details": [],
+                    "advisory_gaps": [],
+                },
                 "actionability_result",
                 id="actionability-bare-tbd-not-list",
+            ),
+            pytest.param(
+                VALID_SCOPE_COVERAGE,
+                {"valid": True, "bare_tbd": [], "missing_details": [], "advisory_gaps": "not-a-list"},
+                "actionability_result",
+                id="actionability-advisory-gaps-not-list",
             ),
         ],
     )
@@ -401,6 +419,32 @@ class TestCapSpecificity:
             cap_specificity(ALL_TWOS, boilerplate_result)
 
 
+class TestCapActionability:
+    """Pure-function tests for blocking actionability caps and valid-score preservation."""
+
+    @pytest.mark.parametrize("score", (0, 1), ids=("score-zero", "score-one"))
+    @pytest.mark.parametrize(
+        "actionability_result",
+        (
+            pytest.param(ACTIONABILITY_ADVISORY_RESULT, id="advisory-only"),
+            pytest.param(VALID_ACTIONABILITY, id="valid-concrete"),
+        ),
+    )
+    def test_valid_actionability_preserves_scorer_score_without_override(self, score, actionability_result):
+        scores = {**ALL_TWOS, "actionability": score}
+
+        result = cap_actionability(scores, actionability_result)
+
+        assert result == {"overridden": False, "scores": scores}
+
+    def test_blocking_actionability_caps_score_above_one_to_one(self):
+        result = cap_actionability(ALL_TWOS, INVALID_ACTIONABILITY)
+
+        assert result["overridden"] is True
+        assert result["scores"]["actionability"] == 1
+        assert result["actionability_capped"] is True
+
+
 class TestApplyScoreCaps:
     """Tests for the orchestrator combining both caps — the composition, not each cap alone."""
 
@@ -408,6 +452,60 @@ class TestApplyScoreCaps:
         result = _apply_score_caps(ALL_TWOS, VALID_CITATIONS, VALID_COVERAGE, VALID_SCOPE_CHECK, VALID_BOILERPLATE)
 
         assert result == {"overridden": False, "scores": ALL_TWOS}
+
+    def test_advisory_actionability_gaps_do_not_cap_stateless_scores(self, tmp_path):
+        plan = tmp_path / "TestPlan.md"
+        plan.write_text(ACTIONABILITY_ADVISORY_GAPS_PLAN)
+        actionability_result = validate_actionability(str(plan))
+
+        assert actionability_result["valid"] is True
+        result = _apply_score_caps(
+            ALL_TWOS,
+            VALID_CITATIONS,
+            VALID_COVERAGE,
+            VALID_SCOPE_CHECK,
+            VALID_BOILERPLATE,
+            actionability_result=actionability_result,
+        )
+
+        assert result == {"overridden": False, "scores": ALL_TWOS}
+
+    @pytest.mark.parametrize(
+        "plan_content, evidence_key, expected_evidence",
+        (
+            pytest.param(ACTIONABILITY_TBD_UNKNOWN_PLAN, "bare_tbd", "OpenShift version", id="bare-tbd"),
+            pytest.param(
+                ACTIONABILITY_RBAC_WITHOUT_RESOURCE_PLAN,
+                "missing_details",
+                "RBAC roles and permissions",
+                id="unusable-rbac",
+            ),
+        ),
+    )
+    def test_blocking_actionability_gaps_still_cap_stateless_scores(
+        self, tmp_path, plan_content, evidence_key, expected_evidence
+    ):
+        plan = tmp_path / "TestPlan.md"
+        plan.write_text(plan_content)
+        actionability_result = validate_actionability(str(plan))
+
+        assert actionability_result["valid"] is False
+        assert actionability_result["advisory_gaps"] == []
+        assert expected_evidence in actionability_result[evidence_key]
+        result = _apply_score_caps(
+            ALL_TWOS,
+            VALID_CITATIONS,
+            VALID_COVERAGE,
+            VALID_SCOPE_CHECK,
+            VALID_BOILERPLATE,
+            actionability_result=actionability_result,
+        )
+
+        assert result["overridden"] is True
+        assert result["scores"]["actionability"] == 1
+        assert result["score"] == 9
+        assert result["verdict"] == "Revise"
+        assert result["actionability_capped"] is True
 
     def test_omitting_required_quality_evidence_raises(self):
         with pytest.raises(TypeError, match="scope_coverage_result"):
@@ -665,27 +763,125 @@ class TestEnforceCitationGate:
         assert "OpenShift version" in body
         assert "RBAC roles and permissions" in body
 
-    def test_override_recomputes_score_but_verdict_stays_revise(self, tmp_path):
-        # specificity=2, grounding=2, scope_fidelity=2, actionability=1, consistency=1 -> tot 8, but
-        # actionability=1 fails the Ready gate so the starting verdict is already Revise, not Ready.
+    def test_blocking_actionability_does_not_recap_already_capped_score(self, tmp_path):
+        scores = {**ALL_TWOS, "actionability": 1}
+        review = _write_review(tmp_path / "TestPlanReview.md", scores, score=9, verdict="Revise", passed=True)
+        plan = tmp_path / "TestPlan.md"
+        plan.write_text(ACTIONABILITY_TBD_UNKNOWN_PLAN)
+        actionability_result = validate_actionability(str(plan))
+
+        assert actionability_result["valid"] is False
+        assert actionability_result["bare_tbd"]
+        result = _enforce_citation_gate(
+            str(tmp_path),
+            VALID_CITATIONS,
+            VALID_COVERAGE,
+            VALID_SCOPE_CHECK,
+            VALID_BOILERPLATE,
+            actionability_result=actionability_result,
+        )
+
+        assert result["overridden"] is False
+        assert result.get("actionability_capped", False) is False
+        data, _ = read_frontmatter(review)
+        assert data["scores"]["actionability"] == 1
+        assert sum(data["scores"].values()) == 9
+        assert data["score"] == 9
+        assert all(score > 0 for score in data["scores"].values())
+        assert data["verdict"] == "Revise"
+        assert data["pass"] is True
+
+    def test_advisory_actionability_gaps_do_not_cap_persisted_score(self, tmp_path):
+        review = _write_review(tmp_path / "TestPlanReview.md", ALL_TWOS, score=10, verdict="Ready", passed=True)
+        plan = tmp_path / "TestPlan.md"
+        plan.write_text(ACTIONABILITY_ADVISORY_GAPS_PLAN)
+        actionability_result = validate_actionability(str(plan))
+
+        assert actionability_result["valid"] is True
+        result = _enforce_citation_gate(
+            str(tmp_path),
+            VALID_CITATIONS,
+            VALID_COVERAGE,
+            VALID_SCOPE_CHECK,
+            VALID_BOILERPLATE,
+            actionability_result=actionability_result,
+        )
+
+        assert result == {"overridden": False}
+        data, _ = read_frontmatter(review)
+        assert data["scores"]["actionability"] == 2
+        assert data["score"] == 10
+        assert filter_for_revision(str(tmp_path)) == "SKIP"
+
+    def test_advisory_actionability_preserves_persisted_score_one(self, tmp_path):
+        scores = {**ALL_TWOS, "actionability": 1}
+        review = _write_review(
+            tmp_path / "TestPlanReview.md",
+            scores,
+            score=9,
+            verdict="Revise",
+            passed=True,
+            before_score=9,
+            before_scores=dict(scores),
+        )
+        plan = tmp_path / "TestPlan.md"
+        plan.write_text(ACTIONABILITY_ADVISORY_GAPS_PLAN)
+        actionability_result = validate_actionability(str(plan))
+
+        assert actionability_result["valid"] is True
+        assert actionability_result["advisory_gaps"]
+        result = _enforce_citation_gate(
+            str(tmp_path),
+            VALID_CITATIONS,
+            VALID_COVERAGE,
+            VALID_SCOPE_CHECK,
+            VALID_BOILERPLATE,
+            actionability_result=actionability_result,
+        )
+
+        assert result == {"overridden": False}
+        data, _ = read_frontmatter(review)
+        assert data["scores"] == scores
+        assert data["score"] == 9
+        assert data["verdict"] == "Revise"
+        assert data["before_score"] == 9
+        assert data["before_scores"] == scores
+        assert filter_for_revision(str(tmp_path)) == "REVISE"
+        assert "Actionability was capped" not in Path(review).read_text()
+
+    def test_override_recomputes_score_and_verdict_without_actionability_normalization(self, tmp_path):
+        # The resulting scores are specificity=2, grounding=2, scope_fidelity=1, actionability=1,
+        # consistency=1 -> total 7, and the recomputed verdict is Revise.
         scores = {"specificity": 2, "grounding": 2, "scope_fidelity": 2, "actionability": 1, "consistency": 1}
-        _write_review(tmp_path / "TestPlanReview.md", scores, score=8, verdict="Revise", passed=True)
+        review = _write_review(tmp_path / "TestPlanReview.md", scores, score=8, verdict="Revise", passed=True)
 
         result = _enforce_citation_gate(
             str(tmp_path), INVALID_CITATIONS, VALID_COVERAGE, VALID_SCOPE_CHECK, VALID_BOILERPLATE
         )
 
-        assert result["scores"]["scope_fidelity"] == 1
+        assert result["scores"] == {
+            "specificity": 2,
+            "grounding": 2,
+            "scope_fidelity": 1,
+            "actionability": 1,
+            "consistency": 1,
+        }
         assert result["score"] == 7
         assert result["verdict"] == "Revise"
         assert result["pass"] is True
+
+        data, _ = read_frontmatter(review)
+        assert data["scores"] == result["scores"]
+        assert data["score"] == 7
+        assert data["verdict"] == "Revise"
+        assert data["pass"] is True
 
     def test_override_can_flip_verdict_from_ready_to_revise(self, tmp_path):
         # specificity=1, grounding=1, scope_fidelity=2, actionability=2, consistency=2 -> tot 8, no
         # zero, actionability=2 -> starting verdict is genuinely Ready. A defect that caps
         # scope_fidelity but never recalls compute_verdict_and_pass would leave verdict="Ready"
-        # here, unlike test_override_recomputes_score_but_verdict_stays_revise above where the
-        # persisted verdict coincidentally matches even without recomputation.
+        # here, unlike the preceding test, which must preserve actionability=1 while
+        # recalculating the verdict after the Scope Fidelity cap.
         scores = {"specificity": 1, "grounding": 1, "scope_fidelity": 2, "actionability": 2, "consistency": 2}
         _write_review(tmp_path / "TestPlanReview.md", scores, score=8, verdict="Ready", passed=True)
 
@@ -838,7 +1034,12 @@ class TestEnforceCitationGateFailsClosedOnMalformedResults:
         [
             pytest.param(
                 {"valid": True, "missing": [], "unmapped_objectives": []},
-                {"valid": False, "bare_tbd": "OpenShift version", "missing_details": []},
+                {
+                    "valid": False,
+                    "bare_tbd": "OpenShift version",
+                    "missing_details": [],
+                    "advisory_gaps": [],
+                },
                 "actionability_result",
                 id="actionability-bare-tbd-not-list",
             ),
@@ -1181,7 +1382,12 @@ class TestEnforceCitationGateCLI:
             ),
             pytest.param(
                 "--actionability-result",
-                {"valid": False, "bare_tbd": "OpenShift version", "missing_details": []},
+                {
+                    "valid": False,
+                    "bare_tbd": "OpenShift version",
+                    "missing_details": [],
+                    "advisory_gaps": [],
+                },
                 "--actionability-result.bare_tbd must be a list of non-empty strings",
                 id="actionability-bare-tbd-not-list",
             ),

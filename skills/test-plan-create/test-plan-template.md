@@ -58,15 +58,30 @@ credentials. Does not include developer tooling (pip, podman, Ollama,
 docker-compose) or SUT configuration (CRD field values, ConfigMap contents)
 — those belong in test case preconditions.}
 
-{For genuinely unavailable required values, use exactly `TBD — Resolution: {concrete action}
-from/with/by/before/after/using {named source or timing}`. Do not use a bare `TBD`.}
+{Concrete OpenShift and RHOAI versions/builds are preferred. If either is missing or vague,
+leave it as an advisory gap rather than inventing a value. For a genuinely unavailable value,
+use exactly `TBD — Resolution: {concrete action} from/with/by/before/after/using {named source
+or timing}`. A bare or unresolved `TBD` is a blocking gap.}
 
 ### 3.2 Test Data Requirements
 {What test data types are needed — describe shape and constraints, not
-full manifests. Actual fixtures belong in test automation.}
+full manifests. Include concrete `format:` values and examples where known; strings,
+identifiers, manifests, and URIs are valid evidence. An example must be in an explicit
+`Example:`, `Sample:`, or `Fixture:` label, an Example/Sample/Fixture table column, or an
+`e.g.,`/`for example` clause. Arbitrary inline backticks and broad words such as `token` do not
+by themselves establish a format or example. Actual fixtures belong in test automation. Missing
+or incomplete format/examples remain visible as advisory gaps. A bare or unresolved `TBD` for a
+required data value remains blocking; do not use it to disguise an incomplete example.}
 
 ### 3.3 Test Users
-{Service accounts, admin users, anonymous users needed for testing}
+{Service accounts, admin users, anonymous users needed for testing. State concrete roles,
+permissions, and resources; missing or unusable RBAC evidence is blocking.}
+
+{Apply the same unresolved-TBD rule independently to Sections 3.1, 3.2, and 3.3: every bare or
+unresolved `TBD` is blocking. A genuinely unknown value is non-blocking only as
+`TBD — Resolution: {concrete action} from/with/by/before/after/using {named source or timing}`;
+`derive` is a valid action when the named source grounds the derivation (for example, named
+overlay RBAC requirements).}
 
 ### 3.4 Test Tools
 {Tools QE uses to run and observe tests: oc/kubectl, curl/httpie, pytest,
