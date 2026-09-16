@@ -398,6 +398,7 @@ scripts/
 ├── format_file_result.py  # Format test file generation result as JSON
 ├── version.py              # Test plan version management
 ├── jira_utils.py           # Jira REST API client with retry logic
+├── strategy_source.py      # Shared Jira issue-to-strategy formatting helpers
 ├── fetch_issue.py          # Fetch Jira issues, save as markdown, extract components
 ├── parse_strat.py          # Parse STRAT sections; snapshot strategy files for test-plan-create
 ├── resolve_strategy.py     # Snapshot-primary strategy resolution for test-plan-review/score

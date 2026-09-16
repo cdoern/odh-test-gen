@@ -103,6 +103,10 @@ echo "✓ Creating test plan artifacts in: $target_dir"
     uv run python scripts/fetch_issue.py <JIRA_KEY> --output "$strategy_file")
    ```
 
+   The fetcher is read-only. If the description contains `exceeds Jira's description size limit`, it
+   resolves the exact `<JIRA_KEY>-strategy.md` attachment; otherwise the description is authoritative
+   and matching attachments are ignored.
+
    **Auto-detected from `artifacts/strat-tasks/<JIRA_KEY>.md`** (shared cache; also a Jira-outage fallback for other skills):
    ```bash
    resolve_result=$(cd $(git -C ${CLAUDE_SKILL_DIR} rev-parse --show-toplevel) && uv run python scripts/parse_strat.py resolve-local "<JIRA_KEY>") || exit 1

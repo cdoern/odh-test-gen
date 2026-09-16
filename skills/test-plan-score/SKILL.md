@@ -68,6 +68,10 @@ If installation fails, inform the user and do NOT proceed. Once installed, all P
    strategy_path=$(echo "$resolve_result" | jq -r '.strategy_file')
    ```
 
+   The resolver is read-only with respect to Jira. It preserves typed Jira request failures and
+   returns the stable `jira_fetch_failed` error instead of exposing request URLs, server details, or
+   accepting a partial strategy.
+
    `strategy_path` is the persistent, local-only snapshot — it is never deleted.
 
 4. Compute AC/NFR citation validity, coverage, bidirectional scope coverage, and actionability evidence deterministically (mirrors `test-plan.review` Step 1.5) via [`scripts/build_citation_inputs.py`](scripts/build_citation_inputs.py), which derives `ac_count`/`nfr_categories` from `strategy_path` and calls the validators directly:

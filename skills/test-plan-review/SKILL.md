@@ -67,6 +67,10 @@ If installation fails, inform the user and do NOT proceed. Once installed, all P
    strategy_file_path=$(echo "$resolve_result" | jq -r '.strategy_file')
    ```
 
+   The resolver is read-only with respect to Jira. It preserves typed Jira request failures and
+   returns the stable `jira_fetch_failed` error instead of exposing request URLs, server details, or
+   accepting a partial strategy.
+
    `strategy_file_path` is the persistent, local-only snapshot — it is never removed (not at Step
    5, not across any re-score cycle) and is reused as-is on every re-score in Step 4e.
 

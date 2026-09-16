@@ -12,7 +12,7 @@ import os
 import sys
 import time
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import requests
 
@@ -25,7 +25,20 @@ _ENV_ALIASES = {
 }
 
 
-def require_env(var_name: str) -> str:
+class AttachmentFetchError(Exception):
+    """Raised when a Jira attachment URL cannot be validated or downloaded."""
+
+
+class JiraConfigurationError(AttachmentFetchError):
+    """Raised when Jira configuration is missing for a library-level request."""
+
+
+def _jira_auth() -> tuple[str, str]:
+    """Return the configured Jira credentials for authenticated requests."""
+    return require_env("JIRA_USER", exit_on_missing=False), require_env("JIRA_TOKEN", exit_on_missing=False)
+
+
+def require_env(var_name: str, *, exit_on_missing: bool = True) -> str:
     """
     Require an environment variable to be set.
 
@@ -35,12 +48,16 @@ def require_env(var_name: str) -> str:
 
     Args:
         var_name: Name of the environment variable
+        exit_on_missing: Exit through ``exit_error`` when true; otherwise raise
+            ``JiraConfigurationError`` for library callers.
 
     Returns:
         The value of the environment variable
 
     Raises:
-        SystemExit: If neither the variable nor its alias is set
+        SystemExit: If neither the variable nor its alias is set and ``exit_on_missing`` is true
+        JiraConfigurationError: If neither the variable nor its alias is set and
+            ``exit_on_missing`` is false
     """
     value = os.getenv(var_name)
     if not value:
@@ -50,6 +67,8 @@ def require_env(var_name: str) -> str:
     if not value:
         alias = _ENV_ALIASES.get(var_name, "")
         hint = f" (or {alias})" if alias else ""
+        if not exit_on_missing:
+            raise JiraConfigurationError(f"Jira configuration is missing: {var_name}")
         exit_error(f"Error: {var_name}{hint} environment variable is required")
     return value
 
@@ -75,16 +94,13 @@ def make_request(
     Raises:
         requests.HTTPError: If the request fails
     """
-    jira_url = require_env("JIRA_URL")
-    jira_user = require_env("JIRA_USER")
-    jira_token = require_env("JIRA_TOKEN")
-
+    jira_url = require_env("JIRA_URL", exit_on_missing=False)
     url = f"{jira_url.rstrip('/')}{endpoint}"
 
     response = requests.request(
         method=method,
         url=url,
-        auth=(jira_user, jira_token),
+        auth=_jira_auth(),
         headers={"Content-Type": "application/json"},
         json=json_data,
         params=params,
@@ -202,6 +218,66 @@ def get_issue(issue_key: str, fields: str | None = None) -> dict[str, Any]:
 
     endpoint = f"/rest/api/2/issue/{quote(issue_key, safe='')}"
     return api_call_with_retry(endpoint, params=params)
+
+
+def _url_origin(url: str) -> tuple[str, str, int | None]:
+    """Return the normalized scheme, hostname, and effective port for an absolute URL."""
+    if not isinstance(url, str):
+        raise ValueError("URL must be absolute")
+
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+        port = parsed.port
+    except (TypeError, ValueError) as exc:
+        raise ValueError("URL must have a valid origin") from exc
+
+    scheme = parsed.scheme.lower()
+    if not scheme or not parsed.netloc or not hostname:
+        raise ValueError("URL must be absolute")
+
+    if port is None:
+        port = {"http": 80, "https": 443}.get(scheme)
+
+    return scheme, hostname.casefold(), port
+
+
+def download_attachment(content_url: str) -> str:
+    """Download same-origin Jira attachment content using configured credentials.
+
+    The attachment URL must be absolute, use HTTPS, and have the same scheme, host,
+    and effective port as ``JIRA_URL``. This validation happens before credentials
+    are loaded or attached to the request. ``JIRA_URL``/``JIRA_BASE_URL`` and
+    ``JIRA_USER``/``JIRA_EMAIL`` and ``JIRA_TOKEN``/``JIRA_API_TOKEN`` aliases remain
+    supported through the shared environment helper.
+
+    Args:
+        content_url: Absolute Jira attachment ``content`` URL from an issue payload
+
+    Returns:
+        The attachment body as text
+
+    Raises:
+        AttachmentFetchError: If the URL is malformed, is not the configured Jira
+            origin, or the attachment cannot be downloaded
+    """
+    try:
+        jira_url = require_env("JIRA_URL", exit_on_missing=False)
+        content_origin = _url_origin(content_url)
+        if content_origin[0] != "https":
+            raise ValueError("attachment URL must use HTTPS")
+        if content_origin != _url_origin(jira_url):
+            raise ValueError("attachment URL origin does not match configured Jira URL")
+
+        response = requests.get(
+            content_url,
+            auth=_jira_auth(),
+            timeout=60,
+        )
+        response.raise_for_status()
+        return response.text
+    except (ValueError, requests.RequestException) as exc:
+        raise AttachmentFetchError("Jira attachment fetch failed") from exc
 
 
 def add_labels(issue_key: str, labels: list[str], remove: list[str] | None = None) -> None:

@@ -13,9 +13,11 @@ import pytest
 import requests
 
 from scripts.jira_utils import (
+    AttachmentFetchError,
     add_labels,
     api_call,
     api_call_with_retry,
+    download_attachment,
     get_issue,
     make_request,
     require_env,
@@ -34,6 +36,11 @@ class TestRequireEnv:
         """Test that require_env exits when variable is missing."""
         with patch.dict(os.environ, {}, clear=True), pytest.raises(SystemExit):
             require_env("MISSING_VAR")
+
+    def test_require_env_can_raise_for_library_callers(self):
+        """Test that library callers can receive a typed configuration error."""
+        with patch.dict(os.environ, {}, clear=True), pytest.raises(AttachmentFetchError):
+            require_env("JIRA_URL", exit_on_missing=False)
 
     def test_require_env_falls_back_to_alias(self):
         """Test that require_env uses alias when canonical name is unset."""
@@ -57,6 +64,40 @@ class TestRequireEnv:
             assert require_env("JIRA_URL") == "https://jira.example.com"
             assert require_env("JIRA_USER") == "user@example.com"
             assert require_env("JIRA_TOKEN") == "token123"
+
+
+class TestLibraryConfiguration:
+    """Tests for non-exiting Jira configuration lookup used by library callers."""
+
+    @pytest.mark.parametrize("missing", ["JIRA_URL", "JIRA_USER", "JIRA_TOKEN"])
+    @patch("scripts.jira_utils.requests.request")
+    def test_make_request_missing_configuration_is_typed(self, mock_request, missing):
+        env_vars = {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_USER": "test_user",
+            "JIRA_TOKEN": "secret-token",
+        }
+        env_vars.pop(missing)
+
+        with patch.dict(os.environ, env_vars, clear=True), pytest.raises(AttachmentFetchError):
+            make_request("GET", "/rest/api/2/issue/TEST-123")
+
+        mock_request.assert_not_called()
+
+    @pytest.mark.parametrize("missing", ["JIRA_URL", "JIRA_USER", "JIRA_TOKEN"])
+    @patch("scripts.jira_utils.requests.get")
+    def test_download_attachment_missing_configuration_is_typed(self, mock_get, missing):
+        env_vars = {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_USER": "test_user",
+            "JIRA_TOKEN": "secret-token",
+        }
+        env_vars.pop(missing)
+
+        with patch.dict(os.environ, env_vars, clear=True), pytest.raises(AttachmentFetchError):
+            download_attachment("https://jira.example.com/secure/attachment/42/strategy.md")
+
+        mock_get.assert_not_called()
 
 
 class TestMakeRequest:
@@ -270,6 +311,109 @@ class TestGetIssue:
 
         actual_endpoint = mock_api_call.call_args[0][0]
         assert actual_endpoint == "/rest/api/2/issue/RHOAIENG-123"
+
+
+class TestDownloadAttachment:
+    """Tests authenticated reads of Jira attachment content."""
+
+    @patch("scripts.jira_utils.requests.get")
+    def test_downloads_content_url_with_configured_credentials(self, mock_get):
+        response = Mock()
+        response.text = "## Strategy\n"
+        response.raise_for_status.return_value = None
+        mock_get.return_value = response
+
+        env_vars = {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_USER": "test_user",
+            "JIRA_TOKEN": "secret-token",
+        }
+
+        with patch.dict(os.environ, env_vars):
+            result = download_attachment("https://jira.example.com/secure/attachment/42/strategy.md")
+
+        assert result == "## Strategy\n"
+        mock_get.assert_called_once()
+        request = mock_get.call_args
+        assert request.args[0] == "https://jira.example.com/secure/attachment/42/strategy.md"
+        assert request.kwargs["auth"] == ("test_user", "secret-token")
+        assert "secret-token" not in request.args[0]
+
+    @patch("scripts.jira_utils.requests.get")
+    def test_attachment_download_error_does_not_expose_token(self, mock_get):
+        response = Mock()
+        response.raise_for_status.side_effect = requests.HTTPError("attachment unavailable")
+        mock_get.return_value = response
+
+        env_vars = {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_USER": "test_user",
+            "JIRA_TOKEN": "secret-token",
+        }
+
+        with patch.dict(os.environ, env_vars), pytest.raises(AttachmentFetchError) as exc_info:
+            download_attachment("https://jira.example.com/secure/attachment/42/strategy.md")
+
+        assert "secret-token" not in str(exc_info.value)
+
+    @patch("scripts.jira_utils.requests.get")
+    def test_url_validation_and_transport_failures_share_one_typed_error(self, mock_get):
+        env_vars = {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_USER": "test_user",
+            "JIRA_TOKEN": "secret-token",
+        }
+
+        with patch.dict(os.environ, env_vars):
+            with pytest.raises(AttachmentFetchError) as validation_error:
+                download_attachment("https://evil.example.com/secure/attachment/42/strategy.md")
+
+            mock_get.assert_not_called()
+            mock_get.side_effect = requests.ConnectionError("attachment transport failed")
+
+            with pytest.raises(AttachmentFetchError) as transport_error:
+                download_attachment("https://jira.example.com/secure/attachment/42/strategy.md")
+
+        assert type(validation_error.value) is type(transport_error.value)
+        mock_get.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "content_url",
+        [
+            "not-a-url",
+            "/secure/attachment/42/strategy.md",
+            "https://evil.example.com/secure/attachment/42/strategy.md",
+            "https://jira.example.com:8443/secure/attachment/42/strategy.md",
+            "http://jira.example.com/secure/attachment/42/strategy.md",
+        ],
+    )
+    @patch("scripts.jira_utils.requests.get")
+    def test_rejects_malformed_or_cross_origin_urls_before_sending_credentials(self, mock_get, content_url):
+        env_vars = {
+            "JIRA_URL": "https://jira.example.com",
+            "JIRA_USER": "test_user",
+            "JIRA_TOKEN": "secret-token",
+        }
+
+        with patch.dict(os.environ, env_vars), pytest.raises(AttachmentFetchError):
+            download_attachment(content_url)
+
+        mock_get.assert_not_called()
+
+    @patch("scripts.jira_utils._jira_auth")
+    @patch("scripts.jira_utils.requests.get")
+    def test_rejects_same_origin_http_before_loading_credentials(self, mock_get, mock_auth):
+        env_vars = {
+            "JIRA_URL": "http://jira.example.com:8080/jira",
+            "JIRA_USER": "test_user",
+            "JIRA_TOKEN": "secret-token",
+        }
+
+        with patch.dict(os.environ, env_vars), pytest.raises(AttachmentFetchError):
+            download_attachment("http://jira.example.com:8080/secure/attachment/42/strategy.md")
+
+        mock_auth.assert_not_called()
+        mock_get.assert_not_called()
 
 
 class TestAddLabels:

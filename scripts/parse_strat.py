@@ -23,7 +23,7 @@ import secrets
 import sys
 from pathlib import Path
 
-from scripts.fetch_issue import parse_components
+from scripts.strategy_source import parse_components
 from scripts.utils.error_utils import exit_error_with_json
 from scripts.utils.repo_utils import get_git_root
 from scripts.utils.schemas import SCHEMAS

@@ -17,8 +17,8 @@ from pathlib import Path
 
 import requests
 
-from scripts.fetch_issue import format_issue_as_markdown
-from scripts.jira_utils import get_issue
+from scripts.jira_utils import AttachmentFetchError, get_issue
+from scripts.strategy_source import format_issue_as_markdown
 from scripts.utils.error_utils import exit_error_with_json
 from scripts.utils.snapshot_io import write_snapshot_nofollow
 
@@ -57,7 +57,7 @@ def main():
 
     try:
         result = resolve_strategy(args.feature_dir, args.jira_key)
-    except requests.RequestException:
+    except (requests.RequestException, AttachmentFetchError):
         exit_error_with_json({"status": "failed", "error": "jira_fetch_failed"})
     except OSError:
         exit_error_with_json({"status": "failed", "error": "snapshot_write_failed"})
